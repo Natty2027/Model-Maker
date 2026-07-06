@@ -9,6 +9,17 @@ import {
 } from "lucide-react";
 
 /* ============================================================================
+   PLATFORM (Windows / Mac)  — a header toggle makes every OS-specific
+   instruction resolve to the right platform. Default: Mac.
+   • P("win text", "mac text")  marks a platform-specific value in the data.
+   • rp(value, platform)        resolves it (passes plain values through).
+   ============================================================================ */
+const PlatformCtx = React.createContext("mac");
+const usePlatform = () => React.useContext(PlatformCtx);
+const P = (win, mac) => ({ __p: true, win, mac });
+const rp = (v, plat) => (v && typeof v === "object" && v.__p ? (plat === "mac" ? v.mac : v.win) : v);
+
+/* ============================================================================
    OPTIMIZATION ENGINE  —  two-phase simplex + branch-and-bound (tested)
    ============================================================================ */
 function solveLP(objType, c, constraints) {
@@ -124,7 +135,8 @@ const FORMULAS = [
     how: "A $ locks a row and/or column so it doesn't shift when you copy a formula. $A$1 is fully locked; A$1 locks the row; $A1 locks the column.",
     why: "Copying one formula across a whole table is the single biggest time-saver in modeling. Lock the cells that should stay put (a rate, a total) and leave the ones that should move.",
     ex: { setup: "Rate in $AD$31, monthly units in AD34:AG34", formula: "=$AD$30+$AD$31*AD34", result: "copy right → the rate stays locked, units advance" },
-    watch: "Press F4 while editing a reference to cycle A1 → $A$1 → A$1 → $A1." },
+    watch: P("Press F4 while editing a reference to cycle A1 → $A$1 → A$1 → $A1.",
+             "Press ⌘ T (or fn + F4) while editing a reference to cycle A1 → $A$1 → A$1 → $A1. On a Mac the plain F4 key usually controls screen brightness.") },
   { name: "Range names", cat: "Refs", syntax: "=SUMPRODUCT(Cost,Ship)",
     how: "Assign a readable name to a cell or block (Formulas ▸ Define Name, or type in the Name Box). The name then works anywhere a reference does.",
     why: "Named ranges make Solver models and long formulas readable — reviewers see 'Capacity' not '$L$14'. Cholette leans on these in the LP labs.",
@@ -376,23 +388,13 @@ const HOWTOS = [
   { id: "solver", title: "Set up & run Solver", tag: "optimization",
     goal: "Turn a spreadsheet into an optimization that finds the best decisions for you.",
     steps: [
-      { do: "Turn Solver on (one-time) — Windows", path: "File ▸ Options ▸ Add-ins ▸ Manage: Excel Add-ins ▸ Go… ▸ ✓ Solver Add-in ▸ OK", why: "Solver ships with Excel but is off by default. Once enabled it appears in the Data ribbon's Analyze group. On a Mac the path is different — see the “On a Mac? Start here” guide." },
+      { do: "Turn Solver on (one-time)", path: P("File ▸ Options ▸ Add-ins ▸ Manage: Excel Add-ins ▸ Go… ▸ ✓ Solver Add-in ▸ OK", "Tools ▸ Excel Add-ins… ▸ ✓ Solver Add-In ▸ OK"), why: P("Solver ships with Excel but is off by default. On Windows it lives under File ▸ Options. Once enabled it appears in the Data ribbon's Analyze group.", "Solver ships with Excel but is off by default. Mac Excel has no “File ▸ Options” — add-ins live under the Tools menu. Once ticked, Solver appears in the Data tab, same as Windows.") },
       { do: "Lay out the model first", why: "You need input cells, decision cells (start them at 0 or any guess), formula cells, and one objective cell in place before you open Solver." },
       { do: "Write the objective in one cell", formula: "=SUMPRODUCT(profit_per_unit, decisions)", why: "This single number is what Solver pushes up (Max) or down (Min)." },
       { do: "Open Solver and set the target", path: "Data ▸ Solver → Set Objective = your objective cell → choose Max or Min", why: "Tells Solver what 'best' means." },
       { do: "Point 'By Changing Variable Cells' at the decisions", path: "select your amber decision cells", why: "These are the only cells Solver is allowed to alter." },
       { do: "Add each business limit as a constraint", path: "Add ▸ Cell Reference (the 'used' cell) ▸ operator ▸ Constraint (the limit)", formula: "e.g.  $E$6  <=  $G$6", why: "Every capacity, demand, or budget line becomes one constraint row." },
-      { do: "Pick the method and solve", path: "Select 'Simplex LP' ▸ ✓ Make Unconstrained Variables Non-Negative ▸ Solve ▸ Keep Solver Solution", why: "Simplex LP is exact for linear models and handles integers via branch-and-bound. (This dialog is identical on Mac.)" },
-    ] },
-  { id: "mac", title: "On a Mac? Start here", tag: "mac setup",
-    goal: "Excel for Mac tucks several of these commands in different places than Windows — Solver especially. Here's every step that differs on macOS.",
-    steps: [
-      { do: "Enable Solver (one-time) — the Mac way", path: "Tools ▸ Excel Add-ins… ▸ ✓ Solver Add-In ▸ OK", why: "Mac Excel has no “File ▸ Options.” Add-ins live under the Tools menu. Once ticked, Solver appears in the Data tab exactly like on Windows." },
-      { do: "Open Solver", path: "Data ▸ Solver", why: "Same spot as Windows once it's enabled — Data ribbon, Analyze group. The Solver dialog itself (Set Objective, By Changing Cells, constraints, Simplex LP) is the same." },
-      { do: "Lock a reference with $", path: "⌘ T   (or fn + F4)", why: "On a Mac the plain F4 key usually controls screen brightness, so ⌘ T is what cycles A1 → $A$1 → A$1 → $A1 while editing a formula." },
-      { do: "Change error-checking options", path: "Excel ▸ Settings… ▸ Error Checking", why: "Windows puts this under File ▸ Options ▸ Formulas; on Mac it lives in Excel's own Settings (older versions call it Preferences)." },
-      { do: "There is no Watch Window on Mac", why: "Excel for Mac doesn't include the Watch Window. To audit instead, use Show Formulas (⌃ `) and Trace Precedents / Trace Dependents — both are on the Formulas tab." },
-      { do: "Data Table & Goal Seek — unchanged", path: "Data ▸ What-If Analysis ▸ Data Table / Goal Seek", why: "These sit in the same place on both platforms, so the other Show-Me-How guides work as written on your Mac." },
+      { do: "Pick the method and solve", path: "Select 'Simplex LP' ▸ ✓ Make Unconstrained Variables Non-Negative ▸ Solve ▸ Keep Solver Solution", why: "Simplex LP is exact for linear models and handles integers via branch-and-bound. The Solver dialog is identical on Windows and Mac." },
     ] },
   { id: "sumproduct", title: "Write a SUMPRODUCT objective", tag: "core",
     goal: "Collapse a whole cost or profit table into one number — the heart of every LP.",
@@ -452,8 +454,10 @@ const HOWTOS = [
     steps: [
       { do: "Trace what feeds a cell", path: "click the suspect cell ▸ Formulas ▸ Trace Precedents", why: "Blue arrows point to every input the formula depends on." },
       { do: "Trace what a cell feeds", path: "Formulas ▸ Trace Dependents", why: "Shows the downstream blast radius before you change anything." },
-      { do: "Flip the whole sheet to formulas", path: "Ctrl + ~ (top-left key)", why: "Eyeball the logic instead of the numbers." },
-      { do: "Pin key outputs while you work", path: "Formulas ▸ Watch Window ▸ Add Watch", why: "See critical cells update as you edit elsewhere." },
+      { do: "Flip the whole sheet to formulas", path: P("Ctrl + ~ (top-left key)", "⌃ ` (Control + the top-left key)"), why: "Eyeball the logic instead of the numbers." },
+      { do: P("Pin key outputs while you work", "Audit with the trace arrows (no Watch Window on Mac)"),
+        path: P("Formulas ▸ Watch Window ▸ Add Watch", "Formulas ▸ Trace Precedents / Trace Dependents"),
+        why: P("See critical cells update as you edit elsewhere.", "Excel for Mac has no Watch Window — the trace arrows and Show Formulas are the Mac way to inspect a cell's logic.") },
       { do: "Clear the arrows when done", path: "Formulas ▸ Remove Arrows" },
     ] },
 ];
@@ -671,6 +675,7 @@ function Framework() {
    TAB 2 — FORMULAS
    ============================================================================ */
 function Formulas() {
+  const platform = usePlatform();
   const [cat, setCat] = useState("All");
   const [q, setQ] = useState("");
   const list = useMemo(() => FORMULAS.filter((f) =>
@@ -713,7 +718,7 @@ function Formulas() {
                 <Fx>{f.ex.formula}</Fx>
                 <div className="text-[12px] text-green-700 mt-1 ds-mono">→ {f.ex.result}</div>
               </div>
-              <p className="text-amber-800 text-[13px] flex gap-1.5"><CircleAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />{f.watch}</p>
+              <p className="text-amber-800 text-[13px] flex gap-1.5"><CircleAlert className="w-4 h-4 shrink-0 mt-0.5 text-amber-500" />{rp(f.watch, platform)}</p>
             </div>
           </div>
         ))}
@@ -928,6 +933,7 @@ function randyProfit({ fixed, varCost, price, salvage }, order, demand) {
 }
 
 function Validator() {
+  const platform = usePlatform();
   const base = { fixed: 750, varCost: 8, price: 18, salvage: 6 };
   const [fixed, setFixed] = useState(750);
   const [order, setOrder] = useState(1450);
@@ -979,14 +985,14 @@ function Validator() {
           {[
             ["Trace Precedents", "Formulas ▸ shows every cell that FEEDS a formula. Follow the arrows back to a bad input."],
             ["Trace Dependents", "Shows every cell that USES the selected one — gauge the blast radius before you edit."],
-            ["Show Formulas (Ctrl+~)", "Flip the whole sheet to formula view to eyeball logic instead of results."],
-            ["Watch Window", "Pin key output cells so you see them update while you edit elsewhere."],
-            ["Error checking", "File ▸ Options ▸ Formulas — flags inconsistent formulas and stray references."],
+            [P("Show Formulas (Ctrl+~)", "Show Formulas (⌃ `)"), "Flip the whole sheet to formula view to eyeball logic instead of results."],
+            [P("Watch Window", "Trace arrows (no Watch Window on Mac)"), P("Pin key output cells so you see them update while you edit elsewhere.", "Excel for Mac has no Watch Window — use Trace Precedents/Dependents and Show Formulas to inspect logic instead.")],
+            ["Error checking", P("File ▸ Options ▸ Formulas — flags inconsistent formulas and stray references.", "Excel ▸ Settings… ▸ Error Checking — flags inconsistent formulas and stray references.")],
             ["Give it to an outsider", "If a colleague can't follow it, the model isn't done. Usability is part of correctness."],
-          ].map(([t, d]) => (
-            <li key={t} className="flex gap-3">
+          ].map(([t, d], i) => (
+            <li key={i} className="flex gap-3">
               <ClipboardCheck className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
-              <div><span className="font-semibold text-slate-800 ds-mono text-[13px]">{t}</span><p className="text-slate-600">{d}</p></div>
+              <div><span className="font-semibold text-slate-800 ds-mono text-[13px]">{rp(t, platform)}</span><p className="text-slate-600">{rp(d, platform)}</p></div>
             </li>
           ))}
         </ul>
@@ -1147,6 +1153,7 @@ function Randy() {
    TAB — SHOW ME HOW TO
    ============================================================================ */
 function HowTo() {
+  const platform = usePlatform();
   const [id, setId] = useState(HOWTOS[0].id);
   const ht = HOWTOS.find((h) => h.id === id);
   return (
@@ -1173,10 +1180,10 @@ function HowTo() {
             <li key={i} className="px-5 py-4 flex gap-4">
               <div className="shrink-0 w-7 h-7 rounded-full bg-indigo-100 text-indigo-700 ds-mono text-sm flex items-center justify-center font-semibold">{i + 1}</div>
               <div className="flex-1 min-w-0 space-y-1.5">
-                <div className="font-medium text-slate-900">{s.do}</div>
-                {s.path && <div className="ds-mono text-[12px] text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1 inline-block">{s.path}</div>}
+                <div className="font-medium text-slate-900">{rp(s.do, platform)}</div>
+                {s.path && <div className="ds-mono text-[12px] text-slate-500 bg-slate-50 border border-slate-200 rounded px-2 py-1 inline-block">{rp(s.path, platform)}</div>}
                 {s.formula && <FormulaLine code={s.formula} />}
-                {s.why && <p className="text-[13px] text-slate-600 flex gap-1.5"><Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />{s.why}</p>}
+                {s.why && <p className="text-[13px] text-slate-600 flex gap-1.5"><Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />{rp(s.why, platform)}</p>}
               </div>
             </li>
           ))}
@@ -1338,8 +1345,10 @@ const TABS = [
 
 export default function App() {
   const [tab, setTab] = useState("framework");
+  const [platform, setPlatform] = useState("mac");
   const Active = TABS.find((t) => t.id === tab).el;
   return (
+    <PlatformCtx.Provider value={platform}>
     <div className="ds-body min-h-screen text-slate-800 ds-grid">
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=Inter:wght@400;500;600&display=swap');
@@ -1358,6 +1367,16 @@ export default function App() {
             <div className="leading-tight">
               <div className="ds-display font-bold text-slate-900">DS852 Model Lab</div>
               <div className="text-[11px] ds-mono text-slate-400">Managerial Decision Making · spreadsheet modeling companion</div>
+            </div>
+            {/* platform toggle — flips OS-specific steps (Solver setup, shortcuts, menus) app-wide */}
+            <div className="ml-auto flex items-center gap-1.5">
+              <span className="text-[10px] ds-mono uppercase tracking-widest text-slate-400 hidden sm:inline">Excel for</span>
+              <div className="flex rounded-lg border border-slate-300 overflow-hidden">
+                {["windows", "mac"].map((pf) => (
+                  <button key={pf} onClick={() => setPlatform(pf)}
+                    className={`px-3 py-1 text-xs ds-mono capitalize transition ${platform === pf ? "bg-slate-900 text-white" : "bg-white text-slate-500 hover:text-slate-800"}`}>{pf}</button>
+                ))}
+              </div>
             </div>
           </div>
           {/* fake formula bar */}
@@ -1393,5 +1412,6 @@ export default function App() {
         </p>
       </footer>
     </div>
+    </PlatformCtx.Provider>
   );
 }
