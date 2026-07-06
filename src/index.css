@@ -1,0 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* The app injects its own font + graph-paper styles at runtime (see App.jsx),
+   so only Tailwind's layers are needed here. */
+html, body, #root { min-height: 100%; }
