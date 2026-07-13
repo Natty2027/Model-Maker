@@ -480,6 +480,17 @@ const HOWTOS = [
         why: P("See critical cells update as you edit elsewhere.", "Excel for Mac has no Watch Window — the trace arrows and Show Formulas are the Mac way to inspect a cell's logic.") },
       { do: "Clear the arrows when done", path: "Formulas ▸ Remove Arrows" },
     ] },
+  { id: "pivot", title: "Build a PivotTable", tag: "core",
+    goal: "Summarize a big table — totals by category, counts, averages — in seconds, no formulas.",
+    steps: [
+      { do: "Clean the source data first", why: "Every column needs a single header row, no blank rows/columns, and one fact per row (a 'tidy' table). PivotTables choke on merged cells and gaps." },
+      { do: "Put the cursor in the data, then insert", path: P("Insert ▸ PivotTable ▸ (confirm range) ▸ New Worksheet ▸ OK", "Insert ▸ PivotTable ▸ (confirm range) ▸ OK"), why: "Excel auto-detects the whole table; a new sheet keeps the pivot away from your raw data." },
+      { do: "Drag fields into the four zones", why: "In the PivotTable Fields pane: a category into ROWS (e.g. Region), another into COLUMNS (e.g. Quarter), the number you want summarized into VALUES (e.g. Sales), and anything you want to slice by into FILTERS." },
+      { do: "Set how Values are summarized", path: P("click the value ▸ Value Field Settings ▸ Sum / Count / Average", "click the value ▸ i ▸ Summarize by ▸ Sum / Count / Average"), why: "Defaults to Sum for numbers and Count for text. Switch to Average, Max, % of total, etc. as needed." },
+      { do: "Refresh after the data changes", path: P("PivotTable Analyze ▸ Refresh (Alt+F5)", "PivotTable ▸ Refresh"), why: "A pivot is a snapshot — it does NOT auto-update when you edit the source. Refresh (or Refresh All) to pull new rows/values." },
+      { do: "Drill into any number", why: "Double-click a value cell and Excel drops the underlying rows onto a new sheet — perfect for auditing 'where did this total come from?'" },
+      { do: "PivotTable or SUMIFS?", why: "SUMIFS/COUNTIFS do the same roll-ups with live formulas. Reach for a PivotTable for fast, ad-hoc exploration; use formulas when the result must update automatically inside a model." },
+    ] },
   { id: "sensitivity", title: "Read Solver's sensitivity report", tag: "optimization",
     goal: "Go beyond the answer — learn how much each constraint and price actually matters.",
     steps: [
