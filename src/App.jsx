@@ -398,6 +398,12 @@ const QUIZ = [
     why: "Extreme cases expose logic errors instantly: order zero must give zero revenue and zero variable cost." },
   { cat: "Testing", q: "Which tool highlights every cell that FEEDS INTO a selected formula?", a: ["Trace Dependents", "Trace Precedents", "Goal Seek", "Solver"], correct: 1,
     why: "Trace Precedents shows the inputs to a formula; Trace Dependents shows where a cell is used downstream." },
+  { cat: "Data", q: "You add 20 new rows to a table that a PivotTable summarizes. The pivot still shows the old totals. Why?", a: ["PivotTables are broken", "A pivot is a snapshot — you must Refresh it", "You need to re-open the file", "Excel caps pivots at 100 rows"], correct: 1,
+    why: "A PivotTable is a cached snapshot of the source. It does not auto-update; PivotTable Analyze ▸ Refresh (or Refresh All) pulls in new/changed rows." },
+  { cat: "Data", q: "To see TOTAL sales for each region in a PivotTable, where do the fields go?", a: ["Region → Values, Sales → Rows", "Region → Filters, Sales → Columns", "Region → Rows, Sales → Values", "Region → Columns, Sales → Filters"], correct: 2,
+    why: "The category you group BY goes in Rows (Region); the number being summarized goes in Values (Sales), defaulting to Sum." },
+  { cat: "Data", q: "When would you use SUMIFS instead of a PivotTable for a roll-up?", a: ["When you never want it to change", "When the result must update live inside a model", "PivotTables can't sum", "SUMIFS is always better"], correct: 1,
+    why: "SUMIFS is a live formula that recalculates automatically — ideal inside a model. A PivotTable is better for fast, ad-hoc exploration but must be refreshed." },
 ];
 
 /* ============================================================================
@@ -656,6 +662,53 @@ const PROJECTS = [
           } } },
       { title: "Sanity-check the flows", role: "calc",
         instr: ["Confirm each column received exactly its demand (25 and 25).", "Confirm no plant ships more than its supply (20 and 30).", "The cheapest lane ($4, P2→B) should be used to the hilt — it is."], formulas: [] },
+    ],
+  },
+  {
+    id: "pivotsales", title: "Roll up sales with a PivotTable", level: "Data · PivotTable",
+    brief: "You have 8 sales records (Region, Quarter, Sales): West/Q1 120, East/Q1 90, West/Q2 150, East/Q2 110, West/Q1 80, East/Q2 60, West/Q3 200, East/Q3 130. Build a PivotTable that totals Sales by Region, then answer a couple of questions from it.",
+    stages: [
+      { title: "Enter the raw data", role: "input",
+        instr: ["Type the 8 rows into a clean table with headers Region | Quarter | Sales (one header row, no blank rows).", "This is your source — blue, given data you don't control."], formulas: [] },
+      { title: "Insert the PivotTable", role: "calc",
+        instr: ["Click anywhere in the data, then Insert ▸ PivotTable ▸ New Worksheet ▸ OK.", "Excel auto-selects the whole table."], formulas: [] },
+      { title: "Summarize Sales by Region", role: "calc",
+        instr: ["Drag Region into ROWS.", "Drag Sales into VALUES — it should read 'Sum of Sales'.", "You now have a total for West and a total for East."],
+        checkpoint: { prompt: "What is the total Sales for the West region?", answer: 550, tol: 0.5, unit: "$",
+          hints: [
+            "Use the worksheet below — enter the four West-region Sales values and watch them total.",
+            "The West rows are: 120, 150, 80, 200.",
+            "Sum them: 120 + 150 + 80 + 200.",
+          ],
+          why: "There are four West records — 120, 150, 80, 200 — and the pivot's 'Sum of Sales' for the West row adds them to 550.",
+          solution: ["Find every West row: Q1 120, Q2 150, Q1 80, Q3 200.", "Add them: 120 + 150 + 80 + 200 = 550.", "That's the number in the pivot's West row."],
+          worksheet: {
+            title: "Add the West-region rows",
+            inputs: [{ key: "a", label: "West #1", def: 120 }, { key: "b", label: "West #2", def: 150 }, { key: "c", label: "West #3", def: 80 }, { key: "d", label: "West #4", def: 200 }],
+            rows: (v) => [
+              { label: "West rows entered", value: 4 },
+            ],
+            result: (v) => ({ label: "Sum of West Sales", value: v.a + v.b + v.c + v.d, unit: "$" }),
+          } } },
+      { title: "Check the grand total & drill in", role: "output",
+        instr: ["The PivotTable's grand total is West + East.", "Double-click the grand-total cell — Excel drops all 8 source rows onto a new sheet so you can audit them.", "Remember: if you add rows to the source, you must Refresh the pivot."],
+        checkpoint: { prompt: "What is the grand total of all Sales?", answer: 940, tol: 0.5, unit: "$",
+          hints: [
+            "Grand total = West total + East total.",
+            "West = 550 (from the last step). Now total the East rows: 90, 110, 60, 130.",
+            "East = 390, so grand total = 550 + 390.",
+          ],
+          why: "West sums to 550 and East (90 + 110 + 60 + 130) sums to 390, so every record together totals 940 — the pivot's grand total.",
+          solution: ["West total = 550.", "East rows: 90 + 110 + 60 + 130 = 390.", "Grand total = 550 + 390 = 940."],
+          worksheet: {
+            title: "Region subtotals → grand total",
+            inputs: [{ key: "west", label: "West total", def: 550 }, { key: "east", label: "East total", def: 390 }],
+            rows: (v) => [
+              { label: "West region", value: v.west, unit: "$" },
+              { label: "East region", value: v.east, unit: "$" },
+            ],
+            result: (v) => ({ label: "Grand total = West + East", value: v.west + v.east, unit: "$" }),
+          } } },
     ],
   },
 ];
