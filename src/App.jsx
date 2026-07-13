@@ -292,6 +292,26 @@ const FORMULAS = [
     why: "Turn simulation output into probabilities — how many of 1,000 trials lost money?",
     ex: { setup: "Trial profits P2:P1001", formula: "=COUNTIF(P2:P1001,\"<0\")/1000", result: "probability of a loss" },
     watch: "Dividing a COUNTIF by the trial count is the idiom for estimating a probability from a simulation." },
+  { name: "XLOOKUP", cat: "Lookup", syntax: "=XLOOKUP(value, lookup_array, return_array, [if_not_found], [match_mode])",
+    how: "Searches lookup_array for value and returns the matching item from return_array. No column index, no sorting needed, and it can look in any direction.",
+    why: "The modern replacement for VLOOKUP/INDEX-MATCH (Excel 365 / 2021). Cleaner, safer, and survives inserted columns.",
+    ex: { setup: "IDs A2:A50, names C2:C50", formula: "=XLOOKUP(\"X-14\", A2:A50, C2:C50, \"not found\")", result: "the name for ID X-14" },
+    watch: "Only on Excel 365 / 2021+. For older Excel, fall back to INDEX/MATCH. Add the if_not_found argument to avoid #N/A." },
+  { name: "IFERROR", cat: "Core", syntax: "=IFERROR(value, value_if_error)",
+    how: "Returns value normally, but swaps in value_if_error whenever value evaluates to any error (#DIV/0!, #N/A, #VALUE!, …).",
+    why: "Keeps a model clean when a lookup misses or a divisor is zero — no cascading errors, and Solver/data tables don't choke on stray #N/A.",
+    ex: { setup: "Rate = margin / sales, sales may be 0", formula: "=IFERROR(margin/sales, 0)", result: "0 instead of #DIV/0! when sales is blank" },
+    watch: "IFERROR hides ALL errors — including real bugs. During development, leave errors visible; only wrap once you know why they occur." },
+  { name: "SWITCH", cat: "Core", syntax: "=SWITCH(expr, val1, res1, val2, res2, …, [default])",
+    how: "Compares one expression against a list of values and returns the first match's result — a cleaner alternative to deeply nested IFs when testing the same cell.",
+    why: "Grade letters, region codes, scenario names — reads top-to-bottom instead of nesting.",
+    ex: { setup: "Scenario code in B2 (1/2/3)", formula: "=SWITCH(B2, 1, \"Base\", 2, \"Best\", 3, \"Worst\", \"?\")", result: "the scenario label" },
+    watch: "SWITCH tests equality only. For range bands (≥90 → A) use IFS or nested IF instead." },
+  { name: "FILTER / SORT / UNIQUE", cat: "Lookup", syntax: "=FILTER(array, include) · =SORT(array) · =UNIQUE(array)",
+    how: "Dynamic-array functions that spill a whole result set into neighbouring cells: FILTER keeps rows meeting a condition, SORT orders them, UNIQUE removes duplicates.",
+    why: "Build live sub-tables (e.g. all trials that lost money, sorted) without manual copy/paste or a pivot — they recalc automatically.",
+    ex: { setup: "Data A2:B100, flag in B", formula: "=FILTER(A2:A100, B2:B100=\"West\")", result: "just the West rows, spilled" },
+    watch: "Excel 365 / 2021+ only. The result 'spills' — leave the cells below/right empty or you get #SPILL!." },
 ];
 
 /* ============================================================================
@@ -460,6 +480,32 @@ const HOWTOS = [
         why: P("See critical cells update as you edit elsewhere.", "Excel for Mac has no Watch Window — the trace arrows and Show Formulas are the Mac way to inspect a cell's logic.") },
       { do: "Clear the arrows when done", path: "Formulas ▸ Remove Arrows" },
     ] },
+  { id: "sensitivity", title: "Read Solver's sensitivity report", tag: "optimization",
+    goal: "Go beyond the answer — learn how much each constraint and price actually matters.",
+    steps: [
+      { do: "Solve the model first", path: "Data ▸ Solver ▸ Solve", why: "The report is only offered once Solver finds an optimal (Simplex LP) solution." },
+      { do: "Pick the report in the results dialog", path: "Solver Results ▸ Reports ▸ Sensitivity ▸ OK", why: "Excel adds a new 'Sensitivity Report' sheet. (Only Simplex LP produces it — not the nonlinear or evolutionary engines.)" },
+      { do: "Read the shadow price", why: "For each binding constraint, the shadow price is how much the objective improves if you relax that limit by one unit — i.e. what one more hour of press time is worth." },
+      { do: "Read the allowable ranges", why: "'Allowable increase/decrease' tells you how far a coefficient or a right-hand-side can move before the optimal mix changes. Wide ranges = a stable plan." },
+      { do: "Spot the slack constraints", why: "A constraint with a zero shadow price isn't binding — you have spare capacity there, so buying more of it is wasted money." },
+    ] },
+  { id: "scenario", title: "Save & compare cases with Scenario Manager", tag: "what-if",
+    goal: "Store named what-if cases (Base / Best / Worst) and flip between them or compare side by side.",
+    steps: [
+      { do: "Open it", path: "Data ▸ What-If Analysis ▸ Scenario Manager" },
+      { do: "Add a scenario", path: "Add… ▸ name it (e.g. 'Best case') ▸ Changing cells = your input cells", why: "Each scenario stores one set of values for the cells you nominate — prices, demand, rates." },
+      { do: "Enter the values for that case", why: "Type the inputs for this scenario; repeat Add for Base and Worst." },
+      { do: "Flip between them", path: "select a scenario ▸ Show", why: "Excel drops that scenario's inputs into the sheet and everything recalculates — instant case switching." },
+      { do: "Build a comparison", path: "Summary… ▸ choose your result cells", why: "Produces a table of every scenario's inputs and outputs on one sheet — the deliverable a manager actually wants." },
+    ] },
+  { id: "freeze", title: "Freeze a random draw", tag: "simulation",
+    goal: "Capture a specific set of RAND() results so they stop changing on every edit.",
+    steps: [
+      { do: "Select the volatile cells", why: "Anything built on RAND()/RANDBETWEEN/NORM.INV re-rolls on every recalculation (F9) — fine while simulating, a problem when you want to keep a draw." },
+      { do: "Copy them", path: P("Ctrl + C", "⌘ C") },
+      { do: "Paste back as values", path: P("Paste Special ▸ Values (Ctrl+Alt+V, V)", "Edit ▸ Paste Special ▸ Values (⌘ ⌥ V)"), why: "Replaces the live formulas with the numbers they currently show, so the draw is frozen." },
+      { do: "Turn calc to manual for big sims", path: P("Formulas ▸ Calculation Options ▸ Manual", "Excel ▸ Settings ▸ Calculation ▸ Manual"), why: "Stops thousand-row simulations from re-rolling every keystroke; press F9 to recalc on demand." },
+    ] },
 ];
 
 /* ============================================================================
@@ -485,7 +531,23 @@ const PROJECTS = [
       { title: "Run Solver", role: "calc",
         instr: ["Data ▸ Solver. Set Objective = the profit cell, To: Max.", "By Changing Variable Cells = your two decision cells.", "Add three constraints: Ink used ≤ 60, Press used ≤ 48, Posters ≤ 25.", "Method: Simplex LP · ✓ Non-Negative · Solve · Keep Solution."], formulas: [],
         checkpoint: { prompt: "What maximum profit does Solver report?", answer: 168, tol: 0.5, unit: "$",
-          hint: "Recheck your objective — it should be =SUMPRODUCT over the profit line and both decision cells. Both ink and press should end up fully used." } },
+          hints: [
+            "Try the worksheet below — nudge posters and banners until ink and press are both fully used. That's usually where the optimum sits.",
+            "At the optimum both ink (≤60) and press (≤48) are used to the limit; the poster cap (25) has room to spare.",
+            "Solve 2P+B=60 and P+2B=48 together → P=24, B=12.",
+          ],
+          why: "Ink and press are the binding constraints. Solving them simultaneously gives Posters=24, Banners=12, so profit = 5·24 + 4·12 = 168. The poster cap (25) never bites.",
+          solution: ["Binding limits: 2P+B=60 (ink) and P+2B=48 (press).", "Subtract: (2P+B)−(P+2B)=60−48 → P−B=12.", "With P+2B=48 → P=24, B=12.", "Profit = 5·24 + 4·12 = 120 + 48 = 168."],
+          worksheet: {
+            title: "Try a mix — watch the limits and profit",
+            inputs: [{ key: "P", label: "Posters", def: 24 }, { key: "B", label: "Banners", def: 12 }],
+            rows: (v) => [
+              { label: "Ink used = 2·P + 1·B", value: 2 * v.P + v.B, limit: 60 },
+              { label: "Press used = 1·P + 2·B", value: v.P + 2 * v.B, limit: 48 },
+              { label: "Posters", value: v.P, limit: 25 },
+            ],
+            result: (v) => ({ label: "Profit = 5·P + 4·B", value: 5 * v.P + 4 * v.B, unit: "$" }),
+          } } },
       { title: "Test the model", role: "calc",
         instr: ["Extreme case: set both decisions to 0 — profit must read exactly 0.", "Which constraints are binding at the optimum? (Ink and Press are both fully used; the poster cap is slack.)", "Bump a profit coefficient up by $1 and confirm total profit rises."], formulas: [] },
     ],
@@ -502,11 +564,43 @@ const PROJECTS = [
         instr: ["Build the chain from decision + demand to profit.", "Notice there's no IF — MIN and MAX keep it smooth."],
         formulas: [{ l: "Units sold", c: "=MIN(Order, Demand)" }, { l: "Leftover", c: "=MAX(Order-Demand, 0)" }, { l: "Revenue", c: "=18*Sold + 6*Leftover" }, { l: "Total cost", c: "=750 + 8*Order" }, { l: "Profit", c: "=Revenue - TotalCost" }],
         checkpoint: { prompt: "With Order 1450 and Demand 1500, what profit does your model show?", answer: 13750, tol: 1, unit: "$",
-          hint: "Sold = MIN(1450,1500) = 1450, no leftovers. Revenue 18·1450 = 26,100; cost 750 + 8·1450 = 12,350." } },
+          hints: [
+            "Use the worksheet below with Order 1450 and Demand 1500 — watch each line compute.",
+            "You order 1450 but demand is 1500, so you sell all 1450 and have 0 leftovers.",
+            "Revenue = 18·1450 = 26,100. Cost = 750 + 8·1450 = 12,350. Profit = revenue − cost.",
+          ],
+          why: "Order (1450) is below demand (1500), so every shirt sells at full price and nothing is salvaged. Profit = 26,100 − 12,350 = 13,750.",
+          solution: ["Units sold = MIN(1450, 1500) = 1450.", "Leftover = MAX(1450−1500, 0) = 0.", "Revenue = 18·1450 + 6·0 = 26,100.", "Cost = 750 + 8·1450 = 12,350.", "Profit = 26,100 − 12,350 = 13,750."],
+          worksheet: {
+            title: "Randy's profit — plug in your numbers",
+            inputs: [{ key: "order", label: "Order", def: 1450 }, { key: "demand", label: "Demand", def: 1500 }],
+            rows: (v) => [
+              { label: "Units sold = MIN(order, demand)", value: Math.min(v.order, v.demand) },
+              { label: "Leftover = MAX(order − demand, 0)", value: Math.max(v.order - v.demand, 0) },
+              { label: "Revenue = 18·sold + 6·leftover", value: 18 * Math.min(v.order, v.demand) + 6 * Math.max(v.order - v.demand, 0), unit: "$" },
+              { label: "Cost = 750 + 8·order", value: 750 + 8 * v.order, unit: "$" },
+            ],
+            result: (v) => ({ label: "Profit = Revenue − Cost", value: (18 * Math.min(v.order, v.demand) + 6 * Math.max(v.order - v.demand, 0)) - (750 + 8 * v.order), unit: "$" }),
+          } } },
       { title: "Sweep the order with a data table", role: "calc",
         instr: ["List order quantities 0, 100, 200 … 2500 down a column.", "One cell up-right of the list, link the output: =Profit.", "Select the block ▸ Data ▸ What-If ▸ Data Table ▸ Column input cell = the Order cell.", "Keep Demand fixed at 1500."], formulas: [{ l: "Table link cell", c: "=Profit" }],
         checkpoint: { prompt: "Reading the table, which order gives the highest profit at demand 1500?", answer: 1500, tol: 50, unit: "shirts",
-          hint: "Below demand, every extra shirt earns $18−$8 = $10. Past demand, extras only fetch $6 salvage but cost $8 — a $2 loss each. The peak sits right at order = demand." } },
+          hints: [
+            "Drag the Order in the worksheet below and watch profit rise, peak, then fall.",
+            "Below demand, each extra shirt earns 18 − 8 = $10. Above demand, an extra shirt earns only 6 − 8 = −$2 (a loss).",
+            "So profit climbs right up to order = demand, then declines. The peak is exactly at demand.",
+          ],
+          why: "Every shirt up to demand nets +$10; every shirt past demand nets −$2. Profit therefore peaks exactly where order meets demand — 1,500 — at $14,250.",
+          solution: ["Marginal shirt below demand: +18 − 8 = +$10 → keep ordering.", "Marginal shirt above demand: +6 − 8 = −$2 → stop.", "Peak is at order = demand = 1,500.", "Peak profit = 10·1,500 − 750 = 14,250."],
+          worksheet: {
+            title: "Sweep the order (demand fixed at 1500)",
+            inputs: [{ key: "order", label: "Order", def: 1500, min: 0, max: 2500, step: 50 }],
+            rows: (v) => [
+              { label: "Units sold", value: Math.min(v.order, 1500) },
+              { label: "Leftover (salvaged at $6)", value: Math.max(v.order - 1500, 0) },
+            ],
+            result: (v) => ({ label: "Profit at demand 1500", value: (18 * Math.min(v.order, 1500) + 6 * Math.max(v.order - 1500, 0)) - (750 + 8 * v.order), unit: "$" }),
+          } } },
       { title: "Read the trade-off", role: "output",
         instr: ["The profit curve kinks at order = demand — that bend is the newsvendor trade-off.", "The peak profit at order 1500 is $14,250 (=10·1500 − 750).", "Since salvage ($6) < cost ($8), never order past what you expect to sell."], formulas: [] },
     ],
@@ -528,7 +622,27 @@ const PROJECTS = [
       { title: "Run Solver", role: "calc",
         instr: ["Set Objective = total cost, To: Min. By Changing = the four ship cells.", "Constraints: each plant's Shipped ≤ its Supply; each city's Received ≥ its Demand.", "Simplex LP · ✓ Non-Negative · Solve."], formulas: [],
         checkpoint: { prompt: "What minimum total shipping cost does Solver report?", answer: 310, tol: 0.5, unit: "$",
-          hint: "P2→B is cheapest ($4) — fill it to 25 first. Then cover City A (25) from the plants that are left. Optimal ships 20, 0, 5, 25." } },
+          hints: [
+            "Use the worksheet — try to satisfy every city's demand while keeping each plant within supply, favoring the cheapest lanes.",
+            "P2→B is the cheapest lane at $4 — send as much there as you can (City B needs 25, Plant 2 has 30).",
+            "Fill P2→B=25, then cover City A (25) with P2→A=5 (Plant 2's remainder) and P1→A=20. That's the optimum: 20, 0, 5, 25.",
+          ],
+          why: "Greedily using the cheapest lanes while respecting supply/demand gives P1→A=20, P1→B=0, P2→A=5, P2→B=25. Cost = 8·20 + 6·0 + 10·5 + 4·25 = 310.",
+          solution: ["Cheapest lane P2→B ($4): ship 25 (all of City B).", "Plant 2 has 5 left → P2→A = 5.", "City A still needs 20 → P1→A = 20 (Plant 1's full supply).", "Cost = 8·20 + 10·5 + 4·25 = 160 + 50 + 100 = 310."],
+          worksheet: {
+            title: "Try a shipping plan — watch cost & feasibility",
+            inputs: [
+              { key: "p1a", label: "P1→A ($8)", def: 20 }, { key: "p1b", label: "P1→B ($6)", def: 0 },
+              { key: "p2a", label: "P2→A ($10)", def: 5 }, { key: "p2b", label: "P2→B ($4)", def: 25 },
+            ],
+            rows: (v) => [
+              { label: "Plant 1 shipped = P1→A + P1→B", value: v.p1a + v.p1b, limit: 20 },
+              { label: "Plant 2 shipped = P2→A + P2→B", value: v.p2a + v.p2b, limit: 30 },
+              { label: "City A received = P1→A + P2→A  (need 25)", value: v.p1a + v.p2a, need: 25 },
+              { label: "City B received = P1→B + P2→B  (need 25)", value: v.p1b + v.p2b, need: 25 },
+            ],
+            result: (v) => ({ label: "Total cost = 8·P1A + 6·P1B + 10·P2A + 4·P2B", value: 8 * v.p1a + 6 * v.p1b + 10 * v.p2a + 4 * v.p2b, unit: "$" }),
+          } } },
       { title: "Sanity-check the flows", role: "calc",
         instr: ["Confirm each column received exactly its demand (25 and 25).", "Confirm no plant ships more than its supply (20 and 30).", "The cheapest lane ($4, P2→B) should be used to the hilt — it is."], formulas: [] },
     ],
@@ -1264,22 +1378,32 @@ function ProjectMode() {
       )}
 
       <div className="rounded-xl border border-slate-200 bg-white p-5 max-w-3xl">
-        <div className="flex items-center gap-2 mb-3">
+        <div className="flex items-center gap-2 mb-1 flex-wrap">
+          <span className="text-[11px] ds-mono text-slate-400">Stage {stage + 1}</span>
           <RoleChip role={st.role} />
           <h3 className="ds-display text-lg font-semibold text-slate-900">{st.title}</h3>
         </div>
+        <p className="text-[12px] text-slate-400 mb-3">{ROLE[st.role].note}</p>
         <ul className="space-y-2 mb-4">
           {st.instr.map((line, i) => (
             <li key={i} className="flex gap-2 text-sm text-slate-700"><ChevronRight className="w-4 h-4 text-slate-300 shrink-0 mt-0.5" />{line}</li>
           ))}
         </ul>
         {st.formulas && st.formulas.length > 0 && (
-          <div className="space-y-1.5 mb-3">
-            {st.formulas.map((f, i) => <FormulaLine key={i} label={f.l} code={f.c} />)}
+          <div className="mb-3">
+            <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-1.5">Formulas to type — tap copy</div>
+            <div className="space-y-1.5">
+              {st.formulas.map((f, i) => <FormulaLine key={i} label={f.l} code={f.c} />)}
+            </div>
           </div>
         )}
         {st.note && <p className="text-[13px] text-slate-500 flex gap-1.5 mb-3"><Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />{st.note}</p>}
-        {st.checkpoint && <Checkpoint key={proj.id + stage} cp={st.checkpoint} onPass={() => setDone((d) => ({ ...d, [stage]: true }))} />}
+        {st.checkpoint && <Checkpoint key={proj.id + stage} cp={st.checkpoint} onPass={() => {
+          setDone((d) => ({ ...d, [stage]: true }));
+          // Auto-advance to the next stage after a beat so the learner can read
+          // the "why" first. Guard prevents skipping if they've already moved.
+          if (stage < total - 1) setTimeout(() => setStage((s) => (s === stage ? s + 1 : s)), 2800);
+        }} />}
       </div>
 
       {/* nav */}
@@ -1297,33 +1421,130 @@ function ProjectMode() {
   );
 }
 
+// Interactive mini-worksheet: enter values, watch each line (and the result)
+// compute live — so a learner can self-check in the app without Excel open.
+// The spec supplies inputs, a rows(v) function, and a result(v) function.
+function Worksheet({ spec }) {
+  const [v, setV] = useState(() =>
+    Object.fromEntries(spec.inputs.map((i) => [i.key, i.def])),
+  );
+  const set = (k, raw) => setV((p) => ({ ...p, [k]: raw === "" ? 0 : Number(raw) }));
+  const rows = spec.rows(v);
+  const result = spec.result(v);
+  const fmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return (
+    <div className="rounded-lg border border-slate-200 bg-white p-3 mt-3">
+      <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-2">
+        {spec.title || "Try it live"}
+      </div>
+      <div className="flex flex-wrap gap-x-5 gap-y-2 mb-3">
+        {spec.inputs.map((i) => (
+          <label key={i.key} className="text-xs ds-mono text-slate-600 flex flex-col gap-1">
+            <span>{i.label}</span>
+            {i.min != null ? (
+              <span className="flex items-center gap-2">
+                <input type="range" min={i.min} max={i.max} step={i.step || 1} value={v[i.key]}
+                  onChange={(e) => set(i.key, e.target.value)} className="accent-indigo-600 w-40" />
+                <span className="w-14 text-right text-slate-900">{fmt(v[i.key])}</span>
+              </span>
+            ) : (
+              <input type="number" value={v[i.key]} onChange={(e) => set(i.key, e.target.value)}
+                className="w-24 px-2 py-1 rounded border border-slate-300 text-sm ds-mono text-center focus:outline-none focus:ring-2 focus:ring-indigo-300" />
+            )}
+          </label>
+        ))}
+      </div>
+      <div className="space-y-1 mb-2">
+        {rows.map((r, i) => {
+          const over = r.limit != null && r.value > r.limit + 1e-9;
+          const off = r.need != null && Math.abs(r.value - r.need) > 1e-9;
+          const bad = over || off;
+          return (
+            <div key={i} className="flex items-center justify-between gap-3 text-[12.5px] ds-mono px-2 py-1 rounded bg-slate-50">
+              <span className="text-slate-500">{r.label}</span>
+              <span className={bad ? "text-red-600 font-semibold shrink-0" : "text-slate-800 shrink-0"}>
+                {r.unit === "$" ? "$" : ""}{fmt(r.value)}
+                {r.limit != null ? ` / ${r.limit}${over ? " ⚠" : " ✓"}` : ""}
+                {r.need != null ? (off ? " ✗" : " ✓") : ""}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200">
+        <span className="text-[12.5px] ds-mono text-indigo-700">{result.label}</span>
+        <span className="ds-mono text-lg font-semibold text-indigo-800 shrink-0">
+          {result.unit === "$" ? "$" : ""}{fmt(result.value)}
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Checkpoint({ cp, onPass }) {
   const [val, setVal] = useState("");
   const [state, setState] = useState(null); // 'pass' | 'fail'
+  const [tries, setTries] = useState(0);
   const [reveal, setReveal] = useState(false);
+  const [passed, setPassed] = useState(false);
+  const hints = cp.hints ?? (cp.hint ? [cp.hint] : []);
+  const fmtAns = `${cp.unit === "$" ? "$" : ""}${cp.answer.toLocaleString()}${cp.unit && cp.unit !== "$" ? " " + cp.unit : ""}`;
   const check = () => {
     const n = parseFloat(String(val).replace(/[^0-9.\-]/g, ""));
-    if (isNaN(n)) { setState("fail"); return; }
-    if (Math.abs(n - cp.answer) <= cp.tol) { setState("pass"); onPass && onPass(); } else setState("fail");
+    if (isNaN(n)) { setState("fail"); setTries((t) => t + 1); return; }
+    if (Math.abs(n - cp.answer) <= cp.tol) {
+      setState("pass");
+      if (!passed) { setPassed(true); onPass && onPass(); }
+    } else {
+      setState("fail");
+      setTries((t) => t + 1);
+    }
   };
+  const shown = Math.min(tries, hints.length); // how many progressive hints to reveal
+
   return (
     <div className="rounded-lg border border-indigo-200 bg-indigo-50/60 p-4 mt-2">
       <div className="text-[11px] ds-mono uppercase tracking-widest text-indigo-500 mb-1.5">Checkpoint</div>
-      <p className="text-sm text-slate-800 mb-2">{cp.prompt}</p>
-      <div className="flex items-center gap-2">
+      <p className="text-sm text-slate-800 mb-1">{cp.prompt}</p>
+
+      {cp.worksheet && <Worksheet spec={cp.worksheet} />}
+
+      <div className="flex items-center gap-2 mt-3">
         <input value={val} onChange={(e) => { setVal(e.target.value); setState(null); }} onKeyDown={(e) => e.key === "Enter" && check()}
           placeholder={cp.unit === "$" ? "e.g. 168" : "your result"}
           className="w-40 px-3 py-2 rounded-lg border border-slate-300 ds-mono text-sm focus:outline-none focus:ring-2 focus:ring-indigo-300" />
         <button onClick={check} className="px-3 py-2 rounded-lg bg-indigo-600 text-white text-sm ds-mono font-semibold">Check</button>
       </div>
+
       {state === "pass" && (
-        <div className="flex items-center gap-2 mt-2.5 text-sm text-green-700"><CircleCheck className="w-4 h-4" />Correct — {cp.unit === "$" ? "$" : ""}{cp.answer.toLocaleString()}{cp.unit && cp.unit !== "$" ? " " + cp.unit : ""} matches the solver. Move on.</div>
+        <div className="mt-2.5">
+          <div className="flex items-center gap-2 text-sm text-green-700 font-medium"><CircleCheck className="w-4 h-4" />Correct — {fmtAns} matches the solver.</div>
+          {cp.why && <p className="mt-1.5 text-[13px] text-slate-600"><span className="font-semibold text-slate-700">Why:</span> {cp.why}</p>}
+        </div>
       )}
+
       {state === "fail" && (
         <div className="mt-2.5 text-sm text-amber-800">
-          <div className="flex items-center gap-2"><CircleAlert className="w-4 h-4 text-amber-500" />Not quite. {cp.hint}</div>
-          <button onClick={() => setReveal(true)} className="mt-1 text-[12px] ds-mono text-indigo-600 underline">Show the answer</button>
-          {reveal && <div className="mt-1 ds-mono text-[13px] text-slate-700">Answer: {cp.unit === "$" ? "$" : ""}{cp.answer.toLocaleString()}{cp.unit && cp.unit !== "$" ? " " + cp.unit : ""}</div>}
+          <div className="flex items-center gap-2 font-medium"><CircleAlert className="w-4 h-4 text-amber-500" />Not quite — try again.</div>
+          {shown > 0 && (
+            <ul className="mt-1.5 space-y-1.5">
+              {hints.slice(0, shown).map((h, i) => (
+                <li key={i} className="flex gap-1.5 text-[13px] text-slate-600"><Lightbulb className="w-3.5 h-3.5 text-amber-400 shrink-0 mt-0.5" />{h}</li>
+              ))}
+            </ul>
+          )}
+          {tries >= hints.length && !reveal && (
+            <button onClick={() => setReveal(true)} className="mt-2 text-[12px] ds-mono text-indigo-600 underline">Show the worked solution</button>
+          )}
+          {reveal && (
+            <div className="mt-2 rounded-lg bg-white border border-slate-200 p-3">
+              <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-1.5">Worked solution</div>
+              <ol className="list-decimal ml-4 space-y-1 text-[13px] text-slate-700">
+                {(cp.solution ?? []).map((s, i) => (<li key={i}>{s}</li>))}
+              </ol>
+              <div className="mt-2 ds-mono text-[13px] text-slate-900 font-semibold">Answer: {fmtAns}</div>
+            </div>
+          )}
         </div>
       )}
     </div>
