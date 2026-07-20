@@ -386,6 +386,66 @@ const PRESETS = {
     intVars: [],
     story: "Add a dense fudge-squares recipe ($45/batch). With three products you can't graph it — Solver finds 2 sugar + 1 fudge = $85, a $5 gain over the two-cookie plan.",
   },
+  shipCarpets: {
+    label: "Shipping carpets (transportation)",
+    objType: "min",
+    varNames: [
+      "F1→D1", "F1→D2", "F1→D3", "F1→D4", "F1→D5",
+      "F2→D1", "F2→D2", "F2→D3", "F2→D4", "F2→D5",
+      "F3→D1", "F3→D2", "F3→D3", "F3→D4", "F3→D5",
+      "F4→D1", "F4→D2", "F4→D3", "F4→D4", "F4→D5",
+    ],
+    c: [
+      11, 16, 18, 22, 15,
+      12, 24, 20, 21, 18,
+      18, 17, 15, 15, 20,
+      17, 22, 14, 24, 21,
+    ],
+    constraints: [
+      { coeffs: [1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], op: "<=", rhs: 40, label: "F1 capacity" },
+      { coeffs: [0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], op: "<=", rhs: 50, label: "F2 capacity" },
+      { coeffs: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0], op: "<=", rhs: 50, label: "F3 capacity" },
+      { coeffs: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1], op: "<=", rhs: 60, label: "F4 capacity" },
+      { coeffs: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0], op: ">=", rhs: 30, label: "D1 demand" },
+      { coeffs: [0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0], op: ">=", rhs: 24, label: "D2 demand" },
+      { coeffs: [0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0], op: ">=", rhs: 42, label: "D3 demand" },
+      { coeffs: [0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], op: ">=", rhs: 36, label: "D4 demand" },
+      { coeffs: [0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], op: ">=", rhs: 48, label: "D5 demand" },
+    ],
+    intVars: [],
+    story: "The full carpet template: ship rolls (000's) from 4 factories to 5 distributors at least cost. Each arc is a decision, each node a constraint — the classic transportation network. Sanity check first: total capacity 200 ≥ total demand 180, so it's feasible. Solver finds the cheapest schedule at $2,660 (F1→D2 10, F1→D5 30, F2→D1 30, F2→D5 18, F3→D2 14, F3→D4 36, F4→D3 42). Because every capacity and demand is integer, the answer comes out whole with no integer constraints. Sensitivity: the shadow price on D3's demand is +$14 (one more roll to D3 costs $14); on F1's capacity it's −$3 (one more unit of F1 capacity cuts total cost by $3).",
+  },
+  assignJobs: {
+    label: "Assigning jobs to machines (assignment)",
+    objType: "min",
+    varNames: [
+      "M1→J1", "M1→J2", "M1→J3", "M1→J4",
+      "M2→J1", "M2→J2", "M2→J3", "M2→J4",
+      "M3→J1", "M3→J2", "M3→J3", "M3→J4",
+      "M4→J1", "M4→J2", "M4→J3", "M4→J4",
+      "M5→J1", "M5→J2", "M5→J3", "M5→J4",
+    ],
+    c: [
+      14, 5, 8, 7,
+      2, 12, 6, 5,
+      7, 8, 3, 9,
+      2, 4, 6, 10,
+      5, 5, 4, 8,
+    ],
+    constraints: [
+      { coeffs: [1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0], op: "=", rhs: 1, label: "Job 1 done once" },
+      { coeffs: [0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0], op: "=", rhs: 1, label: "Job 2 done once" },
+      { coeffs: [0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0], op: "=", rhs: 1, label: "Job 3 done once" },
+      { coeffs: [0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], op: "=", rhs: 1, label: "Job 4 done once" },
+      { coeffs: [1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], op: "<=", rhs: 1, label: "M1 capability" },
+      { coeffs: [0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], op: "<=", rhs: 2, label: "M2 capability" },
+      { coeffs: [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0], op: "<=", rhs: 1, label: "M3 capability" },
+      { coeffs: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 0], op: "<=", rhs: 2, label: "M4 capability" },
+      { coeffs: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1], op: "<=", rhs: 1, label: "M5 capability" },
+    ],
+    intVars: [],
+    story: "The assignment template: place 4 jobs on 5 machines to minimize total processing time. Each job must be done exactly once (=1); each machine can take at most its capability (M2 and M4 can do 2 jobs, the rest 1). Assignment is a special case of transportation, so even though the decisions are really 0/1, integer inputs give a 0/1 answer for free — no integer constraints needed. Solver's optimum is 14 time units: M2→J1, M4→J2, M3→J3, M2→J4 (M2 handles two jobs). To forbid a pairing (say M1 can't do J2), either drop that arc, give it a huge cost, or add a constraint pinning it to 0.",
+  },
 };
 
 /* ============================================================================
@@ -468,6 +528,24 @@ const QUIZ = [
     why: "No X, Y can be both ≤ 2 and ≥ 4, so the feasible region is empty — infeasible. Solver reports it can't find a feasible solution. Usually a sign error or over-tight limit." },
   { cat: "Sensitivity", q: "Maximizing with only 'X + Y ≥ 4, X ≥ 0, Y ≥ 0' and no upper limit gives…", a: ["Infeasible", "Unbounded — the objective grows to infinity", "Multiple optima", "z = 4"], correct: 1,
     why: "Nothing caps how large X and Y can grow, so a maximize objective runs off to infinity — unbounded. It means a real limiting constraint was left out." },
+  { cat: "Network", q: "In a network model drawn as nodes and arcs, each ARC corresponds to a…", a: ["Constraint", "Decision variable", "Shadow price", "Objective"], correct: 1,
+    why: "Each arc (a possible flow) is a decision variable; each node (a location) is a constraint. That clean structure is what makes network models special cases of LP." },
+  { cat: "Network", q: "Why do network LPs often return whole-number answers WITHOUT integer constraints?", a: ["Solver rounds them", "The constraint coefficients are all 0s and 1s, so integer supplies/demands give integer solutions", "They use branch-and-bound automatically", "Network problems can't have fractions"], correct: 1,
+    why: "The 0/1 coefficient structure means that when every capacity and demand is integer, the optimal solution is naturally integer — you skip the integer constraints and the model still solves cleanly." },
+  { cat: "Network", q: "Before solving a transportation model, the key sanity check is…", a: ["Total demand must not exceed total capacity, or it's infeasible", "Every cost must be positive", "There must be equal plants and customers", "Demand must be an integer"], correct: 0,
+    why: "If total demand exceeds total supply you can't meet everyone — the problem is infeasible. Check total capacity ≥ total demand before you even open Solver." },
+  { cat: "Network", q: "The shadow price on a DEMAND constraint at distributor D3 is $14. That means…", a: ["Shipping to D3 costs $14 per roll", "Increasing D3's requirement by one unit adds $14 to total shipping cost", "D3 has $14 of slack", "You should stop shipping to D3"], correct: 1,
+    why: "A demand-constraint shadow price is the marginal cost of one more unit of demand there — one extra roll required at D3 raises the optimal total cost by $14." },
+  { cat: "Network", q: "The shadow price on factory F1's CAPACITY constraint is −$3. One more unit of F1 capacity…", a: ["Raises total cost by $3", "Reduces total shipping cost by $3", "Has no effect", "Makes the model infeasible"], correct: 1,
+    why: "A capacity-constraint shadow price tells you how total cost moves as you add capacity. −$3 means an extra unit of F1 capacity lets you re-route and cut $3 from the optimal cost." },
+  { cat: "Network", q: "The classic ASSIGNMENT model is best described as…", a: ["A brand-new model type", "A special case of the transportation problem with 0/1 decisions", "A nonlinear model", "A simulation"], correct: 1,
+    why: "Assigning people/machines to tasks is transportation with supplies and demands of 1, so the decisions come out 0/1 — and integer inputs keep them integer for free." },
+  { cat: "Network", q: "What makes a TRANSSHIPMENT model more general than a plain transportation model?", a: ["It allows negative costs", "It has intermediate nodes you can ship THROUGH (e.g. warehouses)", "It ignores capacity", "It must be nonlinear"], correct: 1,
+    why: "Transshipment adds pass-through nodes — plants can ship via warehouses, and flow can move between same-tier nodes — which is exactly how real supply chains route product." },
+  { cat: "Network", q: "In RedBrand's transshipment sheet, =SUMIF(Origin,H6,Flow) − SUMIF(Destination,H6,Flow) is safe for Solver because…", a: ["SUMIF is always allowed", "The range and criteria don't change while Solver runs — only Flow (the sum_range) does", "It's really a SUMPRODUCT", "IF statements are fine in Solver"], correct: 1,
+    why: "Solver dislikes conditionals applied to the CHANGING cells. Here the range (Origin) and criteria (H6) are fixed; only Flow, the sum_range, varies — so the logic is smooth as far as Solver is concerned. =SUMIF(Flow,100,Flow) would NOT be okay." },
+  { cat: "Network", q: "You can solve a SHORTEST-PATH problem as a transshipment model by…", a: ["Maximizing total distance", "Putting a supply of 1 at the start node and a demand of 1 at the end node", "Removing all intermediate nodes", "Setting every cost to 1"], correct: 1,
+    why: "Push one unit of flow from start to finish: supply 1 at the origin, demand 1 at the destination, arc 'costs' = distances. The min-cost flow traces the shortest path." },
 ];
 
 /* ============================================================================
@@ -607,6 +685,16 @@ const HOWTOS = [
       { do: "Plot the objective at two easy z values", formula: "z = 60 and z = 120 for 30xc + 20xs", why: "Pick z values divisible by the coefficients so intercepts are clean. These lines are parallel — their common slope is the ratio of the objective coefficients." },
       { do: "Slide the objective line to the last feasible corner", why: "To maximize, push the line away from the origin until it just leaves the feasible region — the last corner it touches is optimal. To minimize, slide toward the origin." },
       { do: "Read or solve the optimal vertex", formula: "2xc + 2xs = 6  and  xc = 2  →  xc = 2, xs = 1", why: "Identify the two constraints that cross at that corner and solve them as two equations in two unknowns. For the cookies that's butter and chips → (2, 1), z = $80." },
+    ] },
+  { id: "transport", title: "Build a transportation model", tag: "optimization",
+    goal: "Set up a supply→demand shipping network as an LP — a cost grid, a shipment grid, row/column roll-ups, and one SUMPRODUCT cost.",
+    steps: [
+      { do: "Lay the unit-cost grid as a rectangle", why: "Rows = sources (factories), columns = destinations (distributors). This is the blue given data — one cell per possible route. On a network diagram each of those cells is an arc." },
+      { do: "Build a same-shaped shipment grid", why: "Directly below (or beside) the costs, make a matching amber block for units shipped — start every cell at 0. These are Solver's changing cells; each is a decision variable." },
+      { do: "Roll up each source row and each destination column", formula: "=SUM(ship_row)  ·  =SUM(ship_col)", why: "A row sum is units shipped out of a factory (limited by its capacity); a column sum is units received by a distributor (must cover its demand). Each node becomes one constraint." },
+      { do: "Write the objective as one SUMPRODUCT over both grids", formula: "=SUMPRODUCT(cost_grid, ship_grid)", why: "Cross-multiplies every route's cost by its shipment and totals them — the whole shipping bill in a single cell. SUMPRODUCT works on rectangles, not just rows." },
+      { do: "Sanity-check feasibility BEFORE solving", formula: "=SUM(capacities) >= SUM(demands)", why: "If total demand exceeds total supply you can't satisfy everyone and Solver returns infeasible. Check total capacity ≥ total demand first." },
+      { do: "Run Solver: minimize cost, supply ≤, demand ≥", path: "Data ▸ Solver → Set Objective = cost cell, To: Min → By Changing = the ship grid → Add row sums ≤ capacities and column sums ≥ demands → Simplex LP ▸ ✓ Non-Negative ▸ Solve", why: "Because every coefficient is a 0 or a 1, integer capacities and demands hand you a whole-number shipping plan with no integer constraints. (An assignment problem is the same recipe with supplies and demands of 1.)" },
     ] },
 ];
 
@@ -865,6 +953,55 @@ const PROJECTS = [
           } } },
       { title: "Read binding vs non-binding", role: "output",
         instr: ["Binding constraints (zero slack) form the optimal corner — in the two-cookie plan that's butter and chips; you use every stick and every cup of chips.", "Non-binding constraints have slack — you finish with spare sugar, eggs and flour, so more of them wouldn't earn a cent (shadow price $0).", "Extreme-case test: set every decision to 0 — revenue must read exactly $0.", "The prized resource is whatever is binding with the highest shadow price — buy more of that first, up to what an extra unit is actually worth."], formulas: [] },
+    ],
+  },
+  {
+    id: "carpets", title: "Ship carpets across the network", level: "Network LP · transportation · Solver",
+    brief: "Four factories make rolls of carpet (capacities F1 40, F2 50, F3 50, F4 60, in 000's) for five distributors (demands D1 30, D2 24, D3 42, D4 36, D5 48). Unit shipping costs fill a 4×5 grid. Build the transportation model and let Solver find the least-cost shipping schedule.",
+    stages: [
+      { title: "Enter the cost grid", role: "input",
+        instr: ["Blue 4×5 table of unit shipping costs — rows are factories F1–F4, columns are distributors D1–D5.", "Costs ($/roll): F1 = 11,16,18,22,15 · F2 = 12,24,20,21,18 · F3 = 18,17,15,15,20 · F4 = 17,22,14,24,21.", "Put the capacities (40, 50, 50, 60) down the right edge and the demands (30, 24, 42, 36, 48) along the bottom."], formulas: [] },
+      { title: "Build the shipment grid", role: "decision",
+        instr: ["A matching amber 4×5 block for rolls shipped on each route — start every cell at 0.", "All 20 cells are Solver's changing cells; each one is a decision variable (an arc on the network)."], formulas: [] },
+      { title: "Add capacity and demand roll-ups", role: "calc",
+        instr: ["Sum each factory's row (rolls shipped out) next to its capacity.", "Sum each distributor's column (rolls received) above its demand."],
+        formulas: [{ l: "Shipped from a factory", c: "=SUM(ship_row)" }, { l: "Received by a distributor", c: "=SUM(ship_col)" }] },
+      { title: "Build the objective", role: "output",
+        instr: ["Total the cost across the whole grid in one boxed cell — this is what Solver minimizes."],
+        formulas: [{ l: "Total shipping cost", c: "=SUMPRODUCT(cost_grid, ship_grid)" }] },
+      { title: "Sanity-check, then run Solver", role: "calc",
+        instr: ["First check feasibility: total capacity 40+50+50+60 = 200 ≥ total demand 30+24+42+36+48 = 180. Good.", "Set Objective = total cost, To: Min. By Changing = the 20 ship cells.", "Constraints: each factory's Shipped ≤ its Capacity; each distributor's Received ≥ its Demand.", "Simplex LP · ✓ Non-Negative · Solve."], formulas: [],
+        checkpoint: { prompt: "What minimum total shipping cost does Solver report?", answer: 2660, tol: 1, unit: "$",
+          hints: [
+            "Use the worksheet — it starts on the optimal plan. Try nudging a shipment onto a cheaper-looking lane and watch either the cost climb or a demand/capacity break.",
+            "Lean on the cheap lanes: F4→D3 is $14 (cover all of D3's 42 there), F2→D1 is $12 (cover D1's 30), F1→D5 is $15.",
+            "The optimal routes are F1→D2 10, F1→D5 30, F2→D1 30, F2→D5 18, F3→D2 14, F3→D4 36, F4→D3 42.",
+          ],
+          why: "Routing on the cheapest lanes that still satisfy every demand within each factory's capacity gives total cost 16·10 + 15·30 + 12·30 + 18·18 + 17·14 + 15·36 + 14·42 = $2,660. F1 and F3 ship to capacity (binding); F2 and F4 have slack. Because all capacities and demands are integer, the plan comes out whole with no integer constraints.",
+          solution: ["Cover D3 (42) on the cheapest lane F4→D3 ($14) and D1 (30) on F2→D1 ($12).", "Send F1's 40 as D5 30 + D2 10; F3's 50 as D4 36 + D2 14; F2's remaining 18 to D5.", "Every demand is met and no factory exceeds capacity.", "Cost = 160 + 450 + 360 + 324 + 238 + 540 + 588 = $2,660."],
+          worksheet: {
+            title: "Nudge the shipping plan — watch cost & feasibility",
+            inputs: [
+              { key: "f1d2", label: "F1→D2 ($16)", def: 10 }, { key: "f1d5", label: "F1→D5 ($15)", def: 30 },
+              { key: "f2d1", label: "F2→D1 ($12)", def: 30 }, { key: "f2d5", label: "F2→D5 ($18)", def: 18 },
+              { key: "f3d2", label: "F3→D2 ($17)", def: 14 }, { key: "f3d4", label: "F3→D4 ($15)", def: 36 },
+              { key: "f4d3", label: "F4→D3 ($14)", def: 42 },
+            ],
+            rows: (v) => [
+              { label: "F1 shipped = F1→D2 + F1→D5", value: v.f1d2 + v.f1d5, limit: 40 },
+              { label: "F2 shipped = F2→D1 + F2→D5", value: v.f2d1 + v.f2d5, limit: 50 },
+              { label: "F3 shipped = F3→D2 + F3→D4", value: v.f3d2 + v.f3d4, limit: 50 },
+              { label: "F4 shipped = F4→D3", value: v.f4d3, limit: 60 },
+              { label: "D1 received = F2→D1  (need 30)", value: v.f2d1, need: 30 },
+              { label: "D2 received = F1→D2 + F3→D2  (need 24)", value: v.f1d2 + v.f3d2, need: 24 },
+              { label: "D3 received = F4→D3  (need 42)", value: v.f4d3, need: 42 },
+              { label: "D4 received = F3→D4  (need 36)", value: v.f3d4, need: 36 },
+              { label: "D5 received = F1→D5 + F2→D5  (need 48)", value: v.f1d5 + v.f2d5, need: 48 },
+            ],
+            result: (v) => ({ label: "Total cost = 16·F1D2 + 15·F1D5 + 12·F2D1 + 18·F2D5 + 17·F3D2 + 15·F3D4 + 14·F4D3", value: 16 * v.f1d2 + 15 * v.f1d5 + 12 * v.f2d1 + 18 * v.f2d5 + 17 * v.f3d2 + 15 * v.f3d4 + 14 * v.f4d3, unit: "$" }),
+          } } },
+      { title: "Read the sensitivity", role: "output",
+        instr: ["The shadow price on D3's demand is +$14 — requiring one more roll at D3 adds $14 to the optimal cost.", "The shadow price on F1's capacity is −$3 — one more unit of F1 capacity lets you re-route and cut $3 from the total.", "Only binding constraints (F1 and F3 capacity, all demands) carry a non-zero shadow price; F2 and F4 have slack, so theirs are $0.", "This whole model is a special case of LP with 0/1 coefficients — and the assignment problem is the same setup with every supply and demand equal to 1."], formulas: [] },
     ],
   },
 ];
@@ -1392,9 +1529,15 @@ function Quiz() {
 }
 
 /* ============================================================================
-   TAB 5 — RANDY (newsvendor, worked end to end)
+   TAB — EXAMPLES  (a worked answer for every assignment, solved live)
+   Replaces the single Randy tab. Randy stays as the featured interactive
+   example (RandyInteractive); every Builder preset is then solved by the
+   in-app solver so the numbers on screen are always exactly right.
    ============================================================================ */
-function Randy() {
+
+// The interactive newsvendor — Randy's model, minus its own section title so
+// it can sit inside the Examples gallery as the featured example.
+function RandyInteractive() {
   const inp = { fixed: 750, varCost: 8, price: 18, salvage: 6 };
   const [order, setOrder] = useState(1450);
   const [demand, setDemand] = useState(1500);
@@ -1412,9 +1555,6 @@ function Randy() {
 
   return (
     <div>
-      <SectionTitle eyebrow="Worked example · Lab 1" title="Randy the shirt vendor"
-        sub="The newsvendor problem the course opens with, built the way you'll build it in Excel — color-coded cells, MIN/MAX logic, and a one-way data table to explore the decision." />
-
       <div className="grid lg:grid-cols-5 gap-4 mb-6">
         <div className="lg:col-span-2 space-y-3">
           <div className="rounded-xl border border-blue-200 bg-blue-50/40 p-4">
@@ -1479,6 +1619,108 @@ function Randy() {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// Each entry ties a Builder preset (one of the assignments we've built) to a
+// short takeaway and the name/units of its objective. The optimum itself is
+// NOT hard-coded — it's computed live by the same tested solver the Builder
+// uses, so the number on the card can never drift out of sync with the model.
+const EXAMPLES = [
+  { key: "productMix", objName: "profit", unit: "$",
+    note: "The classic max-profit LP: two products competing for limited cutting and finishing hours. Every assignment after this is a variation on this shape." },
+  { key: "bakeSale", objName: "revenue", unit: "$",
+    note: "Two cookie types share five limited ingredients. A 2-variable LP you can still check by hand or graph." },
+  { key: "bakeSaleFudge", objName: "revenue", unit: "$",
+    note: "Add a third recipe and you can no longer graph it — Solver earns its keep, finding a plan the two-cookie mix can't beat." },
+  { key: "transportation", objName: "shipping cost", unit: "$",
+    note: "The smallest network model: two plants supply two cities at least cost. Each route is a decision (an arc); each supply/demand line is a constraint (a node)." },
+  { key: "shipCarpets", objName: "shipping cost", unit: "$",
+    note: "The full transportation assignment — 4 factories → 5 distributors. All 20 routes are decisions; because every coefficient is 0/1, integer supplies and demands give a whole-number plan for free." },
+  { key: "assignJobs", objName: "total time", unit: "",
+    note: "Assignment is transportation with supplies and demands of 1: place jobs on machines so total processing time is least. The 0/1 answer falls out without any integer constraints." },
+  { key: "staffing", objName: "payroll cost", unit: "$",
+    note: "An integer program — you can't hire a fraction of a person, so both variables are whole numbers and Solver uses branch-and-bound." },
+];
+
+/* ============================================================================
+   TAB — EXAMPLES  (gallery: every assignment, solved by the in-app solver)
+   ============================================================================ */
+function ExampleCard({ ex }) {
+  const preset = PRESETS[ex.key];
+  const res = useMemo(
+    () => solveMIP(preset.objType, preset.c, preset.constraints, preset.intVars || []),
+    [ex.key],
+  );
+  const optimal = res.status === "optimal";
+  const fmtNum = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  // Only the routes/quantities the solver actually uses — matches how the
+  // worked solutions in the stories read, and keeps 20-arc models legible.
+  const active = optimal
+    ? preset.varNames.map((name, i) => ({ name, val: res.x[i] })).filter((d) => Math.abs(d.val) > 1e-6)
+    : [];
+  const objLabel = `Optimal ${ex.objName}`;
+  const objValue = optimal ? `${ex.unit}${fmtNum(res.objective)}` : "—";
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-5 flex flex-col">
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
+        <span className={`text-[10px] ds-mono px-2 py-0.5 rounded-full border ${preset.objType === "max" ? "bg-amber-50 text-amber-700 border-amber-300" : "bg-blue-50 text-blue-700 border-blue-200"}`}>
+          {preset.objType === "max" ? "maximize" : "minimize"}
+        </span>
+        <span className="text-[10px] ds-mono px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 border border-slate-200">
+          {preset.varNames.length} decisions · {preset.constraints.length} constraints
+        </span>
+      </div>
+      <h3 className="ds-display font-semibold text-slate-900">{preset.label}</h3>
+      <p className="text-[13px] text-slate-500 mt-1 mb-3 flex-1">{ex.note}</p>
+
+      <div className="flex items-center justify-between gap-3 px-3 py-2 rounded-lg bg-indigo-50 border border-indigo-200 mb-3">
+        <span className="text-[12px] ds-mono text-indigo-700">{objLabel}</span>
+        <span className="ds-mono text-lg font-semibold text-indigo-800 shrink-0">{objValue}</span>
+      </div>
+
+      {optimal ? (
+        <div>
+          <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-1.5">
+            {preset.objType === "max" ? "Make this many" : "Use these routes"}
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {active.map((d, i) => (
+              <span key={i} className="text-[12px] ds-mono px-2 py-1 rounded bg-slate-50 border border-slate-200 text-slate-700">
+                {d.name} <span className="text-slate-900 font-semibold">{fmtNum(d.val)}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <p className="text-[12px] ds-mono text-red-600">Model status: {res.status}</p>
+      )}
+    </div>
+  );
+}
+
+function Examples() {
+  return (
+    <div>
+      <SectionTitle eyebrow="Worked examples" title="Every assignment, solved"
+        sub="One card per model we've built across the labs — product mix, the bake sale, the shipping networks, assignment, and staffing. Each optimum is computed live by the same tested solver the Builder uses, so what you see is exactly what Excel's Solver returns. Open Build & Solve to load any of these and change the numbers yourself." />
+
+      <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
+        {EXAMPLES.map((ex) => (
+          <ExampleCard key={ex.key} ex={ex} />
+        ))}
+      </div>
+
+      <div className="mb-3">
+        <div className="ds-mono text-[11px] uppercase tracking-widest text-indigo-500 mb-1">Featured · Lab 1 · interactive</div>
+        <h3 className="ds-display text-xl font-semibold text-slate-900">Randy the shirt vendor</h3>
+        <p className="text-sm text-slate-500 mt-0.5 max-w-3xl">
+          The newsvendor problem the course opens with, built the way you'll build it in Excel — color-coded cells, MIN/MAX logic, and a one-way data table. Drag the sliders to explore the order-vs-demand trade-off.
+        </p>
+      </div>
+      <RandyInteractive />
     </div>
   );
 }
@@ -1780,7 +2022,7 @@ const TABS = [
   { id: "howto", label: "Show Me How", icon: ListChecks, el: HowTo },
   { id: "builder", label: "Build & Solve", icon: Wrench, el: Builder },
   { id: "test", label: "Test & Practice", icon: ClipboardCheck, el: TestPractice },
-  { id: "randy", label: "Randy Example", icon: ShoppingBag, el: Randy },
+  { id: "examples", label: "Examples", icon: ShoppingBag, el: Examples },
   { id: "project", label: "Project Mode", icon: FileSpreadsheet, el: ProjectMode },
 ];
 
