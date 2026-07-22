@@ -5,8 +5,9 @@ import {
 import {
   Grid3x3, BookOpen, Wrench, ClipboardCheck, ShoppingBag, Search, Play,
   CircleCheck, CircleX, CircleAlert, ChevronRight, ChevronLeft, Plus, Trash2, RotateCcw, Calculator, Boxes,
-  ListChecks, FileSpreadsheet, Copy, Check, Lightbulb, MousePointerClick,
+  ListChecks, FileSpreadsheet, Copy, Check, Lightbulb, MousePointerClick, Upload, Sparkles,
 } from "lucide-react";
+import { unzipSync, strFromU8 } from "fflate";
 
 /* ============================================================================
    PLATFORM (Windows / Mac)  — a header toggle makes every OS-specific
@@ -112,6 +113,112 @@ function solveMIP(objType, c, constraints, intVars) {
   };
   branch([]);
   return best ? { ...best, status: "optimal" } : { status: "infeasible" };
+}
+
+/* ============================================================================
+   WORKBOOK READER + AUDITOR  — parse an uploaded .xlsx in the browser and
+   check a transportation model against its expected data. An .xlsx is a zip
+   of XML; fflate unzips it, then we pull cell values + formulas by regex.
+   The audit is a heuristic checklist (robust to messy layouts), keyed to the
+   project's expected costs / supplies / demands / optimum.
+   ============================================================================ */
+const XLSX_ERR_RE = /#(NAME\?|REF!|DIV\/0!|VALUE!|N\/A|NUM!|NULL!)/;
+// Stand-in names the "Show Me How" steps use; typed literally they yield #NAME?.
+const XLSX_PLACEHOLDERS = ["ship_row", "ship_col", "ship_grid", "cost_grid", "cost_row", "cost_col"];
+const unescapeXml = (s) =>
+  String(s).replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&#10;/g, " ");
+
+function readXlsx(arrayBuffer) {
+  const files = unzipSync(new Uint8Array(arrayBuffer));
+  const dec = (name) => (files[name] ? strFromU8(files[name]) : "");
+  const ssXml = dec("xl/sharedStrings.xml");
+  const strings = [...ssXml.matchAll(/<si>(.*?)<\/si>/gs)].map((m) =>
+    unescapeXml([...m[1].matchAll(/<t[^>]*>(.*?)<\/t>/gs)].map((x) => x[1]).join("")),
+  );
+  const sheetName = Object.keys(files).find((n) => /^xl\/worksheets\/sheet\d+\.xml$/.test(n));
+  const sh = dec(sheetName);
+  const cells = [];
+  for (const c of sh.matchAll(/<c r="([A-Z]+\d+)"([^>]*)>(.*?)<\/c>/gs)) {
+    const ref = c[1], attrs = c[2], inner = c[3];
+    const t = (attrs.match(/t="([^"]+)"/) || [])[1] || null;
+    const f = (inner.match(/<f[^>]*>(.*?)<\/f>/s) || [])[1];
+    const raw = (inner.match(/<v>(.*?)<\/v>/s) || [])[1];
+    let value = raw == null ? "" : raw, num = null;
+    if (t === "s") value = strings[+raw] ?? "";
+    else if (t === "e") value = raw;                                 // error text, e.g. #NAME?
+    else if (raw != null && raw !== "" && !isNaN(+raw)) num = +raw;  // real number
+    cells.push({ ref, t, f: f ? unescapeXml(f) : null, value: unescapeXml(value), num });
+  }
+  return { cells, strings };
+}
+
+function auditTransport(parsed, audit) {
+  const { cells } = parsed;
+  const nums = cells.filter((c) => c.num != null).map((c) => c.num);
+  const formulas = cells.filter((c) => c.f).map((c) => c.f);
+  const hasNum = (t) => nums.some((n) => Math.abs(n - t) < 1e-6);
+  const missing = (arr) => [...new Set(arr)].filter((t) => !hasNum(t));
+  const findings = [];
+
+  // 1 — formula errors anywhere in the sheet
+  const errCells = cells.filter((c) => XLSX_ERR_RE.test(c.value || ""));
+  if (errCells.length) {
+    const kinds = [...new Set(errCells.map((c) => (c.value.match(XLSX_ERR_RE) || [])[0]))].join(", ");
+    findings.push({ sev: "error", title: `Formula errors in your sheet (${kinds})`,
+      detail: `${errCells.length} cell(s) show an error — ${errCells.slice(0, 4).map((c) => `${c.ref} = ${c.value}`).join(", ")}${errCells.length > 4 ? " …" : ""}. ${/NAME/.test(kinds) ? "A #NAME? means Excel doesn't recognize a word in the formula — usually a name that was never defined." : "Fix the referenced cells so these resolve before running Solver."}` });
+  }
+
+  // 2 — the guide's placeholder names typed literally
+  const litPlace = formulas.filter((f) => XLSX_PLACEHOLDERS.some((p) => new RegExp(`(^|[^A-Za-z0-9_])${p}([^A-Za-z0-9_]|$)`).test(f)));
+  if (litPlace.length) {
+    findings.push({ sev: "error", title: "You typed the walkthrough's placeholder names literally",
+      detail: `Formulas such as “${litPlace.slice(0, 2).join("”  and  “")}” use stand-in names (ship_row, cost_grid, ship_grid) from the steps. Excel doesn't know them, so they return #NAME?. Replace each with the real cell range you select (e.g. =SUM(B9:C9), =SUMPRODUCT(B2:C3,B9:C10)), or create those names via Formulas ▸ Define Name.` });
+  }
+
+  // 3 — cost grid present?
+  const missCost = missing(audit.costs);
+  if (missCost.length === [...new Set(audit.costs)].length) {
+    findings.push({ sev: "error", title: "No cost grid found",
+      detail: `The unit costs (${audit.costs.join(", ")}) don't appear anywhere in the sheet. The objective is =SUMPRODUCT(costs, shipments) — with no cost numbers there's nothing to multiply.` });
+  } else if (missCost.length) {
+    findings.push({ sev: "warn", title: "Cost grid looks incomplete",
+      detail: `These expected unit costs are missing: ${missCost.join(", ")}. Double-check the ${audit.costs.length}-cell cost table.` });
+  }
+
+  // 4 — SUMPRODUCT objective present, and wired to ranges (not bare names)
+  const spFormulas = formulas.filter((f) => /SUMPRODUCT/i.test(f));
+  if (!spFormulas.length) {
+    findings.push({ sev: "error", title: "No SUMPRODUCT objective found",
+      detail: `The total-cost cell should be =SUMPRODUCT(cost_grid, ship_grid) pointing at your two grids. Nothing in the sheet uses SUMPRODUCT.` });
+  } else if (!litPlace.length) {
+    const bareName = spFormulas.filter((f) => {
+      const m = f.match(/SUMPRODUCT\(([^)]*)\)/i);
+      if (!m) return false;
+      return m[1].split(",").some((a) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(a.trim()) && !/^\$?[A-Z]+\$?\d+$/.test(a.trim()));
+    });
+    if (bareName.length) {
+      findings.push({ sev: "warn", title: "SUMPRODUCT points at names, not ranges",
+        detail: `“${bareName[0]}” uses word-arguments that look like defined names rather than cell ranges. Make sure those names exist in Name Manager, or replace them with ranges like B2:C3.` });
+    }
+  }
+
+  // 5 & 6 — supply / demand numbers
+  const missSup = missing(audit.supplies);
+  if (missSup.length) {
+    findings.push({ sev: "warn", title: "Supply values look off",
+      detail: `Expected ${audit.supplyLabel}. Missing from the sheet: ${missSup.join(", ")}. Make sure you used the problem's numbers.` });
+  }
+  const missDem = missing(audit.demands);
+  if (missDem.length) {
+    findings.push({ sev: "warn", title: "Demand values look off",
+      detail: `Expected ${audit.demandLabel}. Missing from the sheet: ${missDem.join(", ")}.` });
+  }
+
+  if (!findings.length) {
+    findings.push({ sev: "ok", title: "No obvious problems detected",
+      detail: `The cost grid, supplies, demands, and a SUMPRODUCT objective are all present with no formula errors. If Solver still isn't returning $${audit.optimum.toLocaleString()}, re-check the constraint directions (supply ≤, demand ≥), pick Simplex LP, and tick “Make Unconstrained Variables Non-Negative.”` });
+  }
+  return findings;
 }
 
 /* ============================================================================
@@ -446,6 +553,56 @@ const PRESETS = {
     intVars: [],
     story: "The assignment template: place 4 jobs on 5 machines to minimize total processing time. Each job must be done exactly once (=1); each machine can take at most its capability (M2 and M4 can do 2 jobs, the rest 1). Assignment is a special case of transportation, so even though the decisions are really 0/1, integer inputs give a 0/1 answer for free — no integer constraints needed. Solver's optimum is 14 time units: M2→J1, M4→J2, M3→J3, M2→J4 (M2 handles two jobs). To forbid a pairing (say M1 can't do J2), either drop that arc, give it a huge cost, or add a constraint pinning it to 0.",
   },
+  furnitureMix: {
+    label: "Furniture: chairs & desks (LP)",
+    objType: "max",
+    varNames: ["Chairs", "Desks"],
+    c: [30, 40],
+    constraints: [
+      { coeffs: [5, 10], op: "<=", rhs: 300, label: "Fabrication hours" },
+      { coeffs: [4, 4], op: "<=", rhs: 200, label: "Assembly hours" },
+    ],
+    intVars: [],
+    story: "The furniture product mix: chairs profit $30 (price $230 − cost $200), desks $40 (price $380 − cost $340). Fabrication offers 300 hours (5/chair, 10/desk); assembly 200 hours (4 each). Materials aren't a constraint. Both labor limits bind at the optimum: 40 chairs + 10 desks = $1,600 profit.",
+  },
+  furnitureSetup: {
+    label: "Furniture + $110 setup (fixed charge)",
+    objType: "max",
+    varNames: ["Chairs", "Desks", "MakeChairs", "MakeDesks"],
+    c: [30, 40, -110, -110],
+    constraints: [
+      { coeffs: [5, 10, 0, 0], op: "<=", rhs: 300, label: "Fabrication hours" },
+      { coeffs: [4, 4, 0, 0], op: "<=", rhs: 200, label: "Assembly hours" },
+      { coeffs: [1, 0, -60, 0], op: "<=", rhs: 0, label: "Chairs ≤ 60·MakeChairs" },
+      { coeffs: [0, 1, 0, -30], op: "<=", rhs: 0, label: "Desks ≤ 30·MakeDesks" },
+      { coeffs: [0, 0, 1, 0], op: "<=", rhs: 1, label: "MakeChairs is 0/1" },
+      { coeffs: [0, 0, 0, 1], op: "<=", rhs: 1, label: "MakeDesks is 0/1" },
+    ],
+    intVars: [2, 3],
+    story: "Now each product type costs $110 to set up, charged only if you make any of it (a fixed charge). MakeChairs / MakeDesks are binary on/off switches; the Big-M links (Chairs ≤ 60·MakeChairs) force a switch on whenever you produce that item. The setup cost flips the plan: instead of making both, the optimum is chairs only (50 chairs) − $110 = $1,390, beating make-both's $1,600 − $220 = $1,380.",
+  },
+  capitalBudget: {
+    label: "Capital budgeting (binary)",
+    objType: "max",
+    varNames: ["P1", "P2", "P3", "P4", "P5", "P6"],
+    c: [141, 187, 121, 83, 265, 127],
+    constraints: [
+      { coeffs: [75, 90, 60, 30, 100, 50], op: "<=", rhs: 250, label: "Year 1 capital" },
+      { coeffs: [25, 35, 15, 20, 25, 20], op: "<=", rhs: 75, label: "Year 2 capital" },
+      { coeffs: [20, 0, 15, 10, 20, 10], op: "<=", rhs: 50, label: "Year 3 capital" },
+      { coeffs: [15, 0, 15, 5, 20, 30], op: "<=", rhs: 50, label: "Year 4 capital" },
+      { coeffs: [10, 30, 15, 5, 20, 40], op: "<=", rhs: 50, label: "Year 5 capital" },
+      { coeffs: [1, 0, 0, 0, 0, -1], op: "<=", rhs: 0, label: "P1 requires P6 (x1 ≤ x6)" },
+      { coeffs: [1, 0, 0, 0, 0, 0], op: "<=", rhs: 1, label: "P1 is 0/1" },
+      { coeffs: [0, 1, 0, 0, 0, 0], op: "<=", rhs: 1, label: "P2 is 0/1" },
+      { coeffs: [0, 0, 1, 0, 0, 0], op: "<=", rhs: 1, label: "P3 is 0/1" },
+      { coeffs: [0, 0, 0, 1, 0, 0], op: "<=", rhs: 1, label: "P4 is 0/1" },
+      { coeffs: [0, 0, 0, 0, 1, 0], op: "<=", rhs: 1, label: "P5 is 0/1" },
+      { coeffs: [0, 0, 0, 0, 0, 1], op: "<=", rhs: 1, label: "P6 is 0/1" },
+    ],
+    intVars: [0, 1, 2, 3, 4, 5],
+    story: "Pick projects to maximize NPV within each year's capital budget, all-or-nothing. Six binary decisions, five yearly budgets, plus the logic rule x1 ≤ x6 ('can't do P1 unless P6 is also selected'). That rule bites: without it the best set is {1,4,5} = NPV 489, but P1 drags in P6, which busts Year 1's 250 budget — so the optimum drops to projects {3,4,5} = NPV 469.",
+  },
 };
 
 /* ============================================================================
@@ -696,6 +853,28 @@ const HOWTOS = [
       { do: "Sanity-check feasibility BEFORE solving", formula: "=SUM(capacities) >= SUM(demands)", why: "If total demand exceeds total supply you can't satisfy everyone and Solver returns infeasible. Check total capacity ≥ total demand first." },
       { do: "Run Solver: minimize cost, supply ≤, demand ≥", path: "Data ▸ Solver → Set Objective = cost cell, To: Min → By Changing = the ship grid → Add row sums ≤ capacities and column sums ≥ demands → Simplex LP ▸ ✓ Non-Negative ▸ Solve", why: "Because every coefficient is a 0 or a 1, integer capacities and demands hand you a whole-number shipping plan with no integer constraints. (An assignment problem is the same recipe with supplies and demands of 1.)" },
     ] },
+  { id: "fixedcharge", title: "Model a fixed setup cost", tag: "optimization",
+    goal: "Charge a one-time cost only when a product or plant is actually used — the fixed-charge trick, with a binary on/off switch.",
+    steps: [
+      { do: "Add a binary on/off cell for each option", why: "One amber 0/1 cell per product (or plant): 1 = 'we set this up', 0 = 'we skip it'. In Solver these get a 'bin' constraint so they can only be 0 or 1." },
+      { do: "Charge the setup only when the switch is on", formula: "=SUMPRODUCT(setup_costs, switches)", why: "A $110 setup times a 0 switch costs nothing; times a 1 it costs $110. This is the fixed charge that a plain profit formula can't capture." },
+      { do: "Link each quantity to its switch with a Big-M constraint", formula: "Chairs <= 60 * y_chair", why: "The crux of the trick: if the switch y is 0 the quantity is forced to 0; if y is 1 the quantity is free up to M. Choose M as the largest that quantity could ever be (here 60, the most chairs any resource allows)." },
+      { do: "Subtract the setup from the objective", formula: "=SUMPRODUCT(profit, qty) - SUMPRODUCT(setup_costs, switches)", why: "Net profit = production profit minus the setup costs you actually incurred. This single cell is what Solver maximizes." },
+      { do: "Mark the switches binary in Solver", path: "Data ▸ Solver ▸ Add ▸ Cell Reference = the switch cells ▸ choose 'bin' ▸ OK", why: "Restricts them to 0/1; Solver's branch-and-bound explores the on/off combinations. Add both the switches and the quantities to 'By Changing Variable Cells'." },
+      { do: "Never do it with IF", why: "=IF(qty>0, 110, 0) makes the model nonlinear and discontinuous — Simplex LP refuses it. The binary switch plus the Big-M link keeps everything linear, which is why a fixed cost can flip the answer (e.g. a $110 setup can make it better to drop a product entirely)." },
+    ] },
+  { id: "faclocation", title: "Lay out a facility-location model", tag: "optimization",
+    goal: "Combine 'which plants to open' (fixed costs) with 'how much to ship' (transportation) on one organized sheet.",
+    steps: [
+      { do: "Block 1 — plant data, one row per plant (blue)", why: "Columns for Fixed cost to open, Capacity, and production Unit cost. These are given parameters — e.g. Pontiac: fixed 7,000, capacity 27,000, unit cost 2.70." },
+      { do: "Block 2 — the transport cost grid (blue)", why: "A rectangle: rows = plants, columns = demand centers, each cell the per-unit shipping cost on that lane. Put each center's Demand along the bottom (they must total the units you have to deliver — 72,000 in the sample)." },
+      { do: "Optionally fold production into shipping", formula: "combined_rate = unit_cost + ship_cost", why: "Adding each plant's production cost to every lane out of it gives one combined rate grid, so the objective is a single clean SUMPRODUCT instead of two." },
+      { do: "Open-plant switches — one binary cell per plant (amber)", why: "A 0/1 cell per plant: the fixed-charge on/off decision. See the 'Model a fixed setup cost' card for the pattern." },
+      { do: "Shipment grid — a matching block of flow cells (amber)", why: "Same shape as the cost grid; start every cell at 0. These are the transportation decision variables — how many units move on each lane." },
+      { do: "Roll up rows and columns, linking capacity to the switch", formula: "=SUM(ship_row) <= Capacity * switch    ·    =SUM(ship_col) >= Demand", why: "A row sum is units shipped out of a plant — capped at its capacity ONLY if it's open (switch 1); if the switch is 0, capacity·0 forces the whole row to 0. A column sum must cover each center's demand." },
+      { do: "Objective: fixed costs of opened plants + total shipping", formula: "=SUMPRODUCT(fixed_costs, switches) + SUMPRODUCT(cost_grid, ship_grid)", why: "One cell adds the setup cost of every opened plant to the whole shipping bill. Minimize it in Solver." },
+      { do: "Run Solver and sanity-check first", path: "Data ▸ Solver → Set Objective = total cost, To: Min → By Changing = switches AND ship grid → switches 'bin' → Simplex LP ▸ ✓ Non-Negative ▸ Solve", why: "Before solving, confirm the plants you might open have enough combined capacity to cover total demand, or Solver returns infeasible." },
+    ] },
 ];
 
 /* ============================================================================
@@ -798,6 +977,20 @@ const PROJECTS = [
   {
     id: "shipping", title: "Two-plant shipping network", level: "Network LP · Solver",
     brief: "Plant 1 supplies 20 units, Plant 2 supplies 30. City A needs 25, City B needs 25. Unit costs: P1→A $8, P1→B $6, P2→A $10, P2→B $4. Build the shipment grid and minimize total cost.",
+    audit: {
+      costs: [8, 6, 10, 4],
+      supplies: [20, 30], supplyLabel: "plant supplies of 20 and 30",
+      demands: [25, 25], demandLabel: "city demands of 25 and 25",
+      routes: 4, optimum: 310,
+      plan: "P1→A 20, P1→B 0, P2→A 5, P2→B 25",
+      layout: [
+        "Costs (rows = plants, cols = cities):  P1: 8, 6   ·   P2: 10, 4",
+        "Shipment grid: a matching 2×2 block of decision cells (start at 0).",
+        "Row sums = units shipped by each plant  →  must be ≤ supply (20, 30).",
+        "Column sums = units received by each city  →  must be ≥ demand (25, 25).",
+        "Objective cell: =SUMPRODUCT(cost 2×2, ship 2×2), minimized in Solver.",
+      ],
+    },
     stages: [
       { title: "Enter the cost grid", role: "input",
         instr: ["Blue 2×2 table of unit costs (rows = plants, columns = cities)."], formulas: [] },
@@ -958,6 +1151,20 @@ const PROJECTS = [
   {
     id: "carpets", title: "Ship carpets across the network", level: "Network LP · transportation · Solver",
     brief: "Four factories make rolls of carpet (capacities F1 40, F2 50, F3 50, F4 60, in 000's) for five distributors (demands D1 30, D2 24, D3 42, D4 36, D5 48). Unit shipping costs fill a 4×5 grid. Build the transportation model and let Solver find the least-cost shipping schedule.",
+    audit: {
+      costs: [11, 16, 18, 22, 15, 12, 24, 20, 21, 18, 18, 17, 15, 15, 20, 17, 22, 14, 24, 21],
+      supplies: [40, 50, 50, 60], supplyLabel: "factory capacities of 40, 50, 50, 60",
+      demands: [30, 24, 42, 36, 48], demandLabel: "distributor demands of 30, 24, 42, 36, 48",
+      routes: 20, optimum: 2660,
+      plan: "F1→D2 10, F1→D5 30, F2→D1 30, F2→D5 18, F3→D2 14, F3→D4 36, F4→D3 42",
+      layout: [
+        "Cost grid: 4×5 rectangle, rows = factories F1–F4, cols = distributors D1–D5.",
+        "Shipment grid: a matching 4×5 block of 20 decision cells (start at 0).",
+        "Row sums = rolls shipped by each factory  →  must be ≤ capacity (40, 50, 50, 60).",
+        "Column sums = rolls received by each distributor  →  must be ≥ demand (30, 24, 42, 36, 48).",
+        "Objective cell: =SUMPRODUCT(cost 4×5, ship 4×5), minimized in Solver.",
+      ],
+    },
     stages: [
       { title: "Enter the cost grid", role: "input",
         instr: ["Blue 4×5 table of unit shipping costs — rows are factories F1–F4, columns are distributors D1–D5.", "Costs ($/roll): F1 = 11,16,18,22,15 · F2 = 12,24,20,21,18 · F3 = 18,17,15,15,20 · F4 = 17,22,14,24,21.", "Put the capacities (40, 50, 50, 60) down the right edge and the demands (30, 24, 42, 36, 48) along the bottom."], formulas: [] },
@@ -1002,6 +1209,132 @@ const PROJECTS = [
           } } },
       { title: "Read the sensitivity", role: "output",
         instr: ["The shadow price on D3's demand is +$14 — requiring one more roll at D3 adds $14 to the optimal cost.", "The shadow price on F1's capacity is −$3 — one more unit of F1 capacity lets you re-route and cut $3 from the total.", "Only binding constraints (F1 and F3 capacity, all demands) carry a non-zero shadow price; F2 and F4 have slack, so theirs are $0.", "This whole model is a special case of LP with 0/1 coefficients — and the assignment problem is the same setup with every supply and demand equal to 1."], formulas: [] },
+    ],
+  },
+  {
+    id: "furnituremix", title: "Furniture shop: chairs & desks", level: "Product mix · Solver · fixed charge",
+    brief: "Your shop makes chairs (sell $230) and desks (sell $380). A chair needs 5 fabrication hours, 4 assembly hours and $50 of materials; a desk needs 10 fabrication, 4 assembly and $100 of materials. Fabrication labor is $18/hr with 300 hours available; assembly is $15/hr with 200 hours available. Build the profit model, let Solver find the best mix — then add a $110 setup cost per product type and watch the plan change.",
+    stages: [
+      { title: "Enter the givens", role: "input",
+        instr: ["Blue cells — selling price: $230 (chair), $380 (desk).", "Blue cells — resource use per unit: chair 5 fab / 4 assembly / $50 material; desk 10 fab / 4 assembly / $100 material.", "Blue cells — labor: fabrication $18/hr (300 hrs available), assembly $15/hr (200 hrs available).", "These are parameters: fixed, not yours to change."], formulas: [] },
+      { title: "Add the decision cells", role: "decision",
+        instr: ["Two amber cells: Chairs and Desks made — start both at 0.", "These are the only cells Solver will change."], formulas: [] },
+      { title: "Build per-unit cost and profit", role: "calc",
+        instr: ["For each product, cost = materials + fab hours·$18 + assembly hours·$15.", "Then profit per unit = price − cost. You should get $30 a chair and $40 a desk."],
+        formulas: [
+          { l: "Chair cost", c: "=50 + 5*18 + 4*15" },
+          { l: "Desk cost", c: "=100 + 10*18 + 4*15" },
+          { l: "Chair profit", c: "=230 - ChairCost" },
+          { l: "Desk profit", c: "=380 - DeskCost" },
+        ],
+        note: "Chair: 50 + 90 + 60 = $200 cost → $30 profit. Desk: 100 + 180 + 60 = $340 cost → $40 profit." },
+      { title: "Build the objective", role: "output",
+        instr: ["One boxed cell totals profit across both products.", "This is the cell Solver maximizes."],
+        formulas: [{ l: "Total profit", c: "=SUMPRODUCT({30;40}, decisions)" }] },
+      { title: "Add the labor constraints", role: "calc",
+        instr: ["Beside each labor limit, compute the hours the current mix uses, then constrain used ≤ available.", "Materials aren't a constraint here — there's no cap on them, only on labor hours."],
+        formulas: [
+          { l: "Fabrication used ≤ 300", c: "=5*Chairs + 10*Desks" },
+          { l: "Assembly used ≤ 200", c: "=4*Chairs + 4*Desks" },
+        ],
+        note: "Plus non-negativity: Chairs ≥ 0, Desks ≥ 0 — you can't make a negative chair." },
+      { title: "Run Solver", role: "calc",
+        instr: ["Data ▸ Solver. Set Objective = the profit cell, To: Max.", "By Changing Variable Cells = Chairs and Desks.", "Add two constraints: Fabrication used ≤ 300, Assembly used ≤ 200.", "Method: Simplex LP · ✓ Non-Negative · Solve · Keep Solution."], formulas: [],
+        checkpoint: { prompt: "What maximum profit does Solver report?", answer: 1600, tol: 0.5, unit: "$",
+          hints: [
+            "Use the worksheet — nudge chairs and desks until both fabrication (≤300) and assembly (≤200) are fully used. That corner is usually the optimum.",
+            "At the optimum both labor constraints bind: 5·Chairs + 10·Desks = 300 and 4·Chairs + 4·Desks = 200.",
+            "Solve those two together → Chairs = 40, Desks = 10.",
+          ],
+          why: "Both labor limits are binding. Solving 5C+10D=300 and 4C+4D=200 gives Chairs=40, Desks=10, so profit = 30·40 + 40·10 = 1,600. Materials never bind.",
+          solution: ["Binding limits: 5C+10D=300 (fabrication) and 4C+4D=200 (assembly).", "Simplify assembly to C+D=50, fabrication to C+2D=60.", "Subtract: D=10, then C=40.", "Profit = 30·40 + 40·10 = 1,200 + 400 = 1,600."],
+          worksheet: {
+            title: "Try a mix — watch the labor limits and profit",
+            inputs: [{ key: "C", label: "Chairs", def: 40, min: 0, max: 60, step: 1 }, { key: "D", label: "Desks", def: 10, min: 0, max: 30, step: 1 }],
+            rows: (v) => [
+              { label: "Fabrication = 5·C + 10·D", value: 5 * v.C + 10 * v.D, limit: 300 },
+              { label: "Assembly = 4·C + 4·D", value: 4 * v.C + 4 * v.D, limit: 200 },
+            ],
+            result: (v) => ({ label: "Profit = 30·C + 40·D", value: 30 * v.C + 40 * v.D, unit: "$" }),
+          } } },
+      { title: "Extend the model: add a $110 setup cost", role: "decision",
+        instr: ["Now each type of furniture you choose to make costs $110 to set up (tooling, jigs), charged only if you make any of it.", "Add a binary 0/1 switch for each product (y_chair, y_desk), and link it: Chairs ≤ 60·y_chair, Desks ≤ 30·y_desk.", "New objective: profit − 110·(y_chair + y_desk). Mark the switches 'bin' in Solver and re-run.", "See 'Show Me How ▸ Model a fixed setup cost' for the full pattern."],
+        formulas: [
+          { l: "Net objective", c: "=SUMPRODUCT({30;40}, decisions) - 110*(y_chair + y_desk)" },
+          { l: "Link chairs to switch", c: "=Chairs <= 60*y_chair" },
+        ],
+        checkpoint: { prompt: "With the $110-per-type setup cost, what maximum NET profit does Solver report?", answer: 1390, tol: 0.5, unit: "$",
+          hints: [
+            "Use the worksheet — the setup cost is charged for each product with a non-zero quantity. Try making only one product versus both.",
+            "Making both (40 chairs, 10 desks) earns 1,600 − 220 = 1,380. But dropping desks avoids one setup entirely.",
+            "Chairs only: assembly caps chairs at 50 (4·50=200), profit 30·50 = 1,500, minus one $110 setup.",
+          ],
+          why: "The two $110 setups cost $220 if you make both, cutting the $1,600 plan to $1,380. Making chairs only pays just one setup: 50 chairs (assembly-limited) earn 30·50 = 1,500, minus $110 = 1,390 — the best. A fixed cost made it optimal to drop a product.",
+          solution: ["Both products: 1,600 − 2·110 = 1,380.", "Chairs only: assembly 4C ≤ 200 → C = 50; profit 30·50 − 110 = 1,390.", "Desks only: fabrication 10D ≤ 300 → D = 30; profit 40·30 − 110 = 1,090.", "Best = chairs only = $1,390."],
+          worksheet: {
+            title: "Setup cost charged per product type — find the best plan",
+            inputs: [{ key: "C", label: "Chairs", def: 50, min: 0, max: 60, step: 1 }, { key: "D", label: "Desks", def: 0, min: 0, max: 30, step: 1 }],
+            rows: (v) => [
+              { label: "Fabrication = 5·C + 10·D", value: 5 * v.C + 10 * v.D, limit: 300 },
+              { label: "Assembly = 4·C + 4·D", value: 4 * v.C + 4 * v.D, limit: 200 },
+              { label: "Setup costs = 110 × (types made)", value: 110 * ((v.C > 0 ? 1 : 0) + (v.D > 0 ? 1 : 0)), unit: "$" },
+            ],
+            result: (v) => ({ label: "Net profit = 30·C + 40·D − setups", value: 30 * v.C + 40 * v.D - 110 * ((v.C > 0 ? 1 : 0) + (v.D > 0 ? 1 : 0)), unit: "$" }),
+          } } },
+      { title: "Read the lesson", role: "output",
+        instr: ["Without setup costs, the smooth optimum mixes both products (40 chairs, 10 desks).", "A fixed charge is a step, not a slope — it only makes sense to pay it if the product earns more than $110 of profit above the alternative.", "Here dropping desks saves a $110 setup and loses little profit, so chairs-only wins. That kind of all-or-nothing choice is exactly why you need binary variables, not plain LP."], formulas: [] },
+    ],
+  },
+  {
+    id: "capitalbudget", title: "Capital budgeting: pick the projects", level: "Binary IP · Solver",
+    brief: "Six projects compete for limited capital over five years. Their NPVs are P1 141, P2 187, P3 121, P4 83, P5 265, P6 127. Each project either gets fully funded or not at all. Capital available each year: Y1 250, Y2 75, Y3 50, Y4 50, Y5 50. There's also a logic rule: you can't take Project 1 unless you also take Project 6. Choose the projects that maximize total NPV.",
+    stages: [
+      { title: "Lay out the data table", role: "input",
+        instr: ["Blue table — one row per project (1–6), with its NPV and the capital it needs in each of Years 1–5.", "P1 needs 75/25/20/15/10 · P2 90/35/0/0/30 · P3 60/15/15/15/15 · P4 30/20/10/5/5 · P5 100/25/20/20/20 · P6 50/20/10/30/40.", "Add the yearly capital available as a row underneath: 250, 75, 50, 50, 50."], formulas: [] },
+      { title: "Add the decision cells", role: "decision",
+        instr: ["One amber 0/1 cell per project — start all at 0.", "These are binary: 1 = fund the project, 0 = skip it. No half-projects allowed."], formulas: [] },
+      { title: "Compute capital used each year", role: "calc",
+        instr: ["Under each year's column, sum the capital the selected projects consume that year.", "Put the 'used' cell next to that year's 'available' so the constraint reads left-to-right."],
+        formulas: [{ l: "Capital used in a year", c: "=SUMPRODUCT(decisions, year_column)" }],
+        note: "SUMPRODUCT of the 0/1 decisions against a year's requirement column adds up only the funded projects." },
+      { title: "Build the objective", role: "output",
+        instr: ["One boxed cell totals the NPV of the selected projects.", "This is the cell Solver maximizes."],
+        formulas: [{ l: "Total NPV", c: "=SUMPRODUCT(NPV, decisions)" }] },
+      { title: "Add the logic constraint", role: "calc",
+        instr: ["'Can't do Project 1 unless Project 6 is also selected' becomes a linear rule: x1 ≤ x6.", "In Excel add a constraint cell so Solver reads Project1 ≤ Project6.", "If P1 is 1, this forces P6 to be 1 too; if P1 is 0, P6 is free."],
+        formulas: [{ l: "Logic: P1 requires P6", c: "=Project1 <= Project6" }] },
+      { title: "Run Solver (binary)", role: "calc",
+        instr: ["Data ▸ Solver. Set Objective = Total NPV, To: Max.", "By Changing Variable Cells = the six project cells.", "Constraints: each year's Used ≤ Available (5 of them), the logic rule x1 ≤ x6, and mark the six cells 'bin'.", "Method: Simplex LP · Solve · Keep Solution."], formulas: [],
+        checkpoint: { prompt: "What maximum total NPV does Solver report?", answer: 469, tol: 0.5,
+          hints: [
+            "Use the worksheet — toggle projects on and off, keeping every year within budget and honoring 'P1 needs P6'.",
+            "The tightest years are 3, 4 and 5 (only 50 available each). Big projects like P5 (NPV 265) are worth keeping.",
+            "Projects 3, 4 and 5 together fit every year's budget and satisfy the logic rule — that's the optimum, NPV 469.",
+          ],
+          why: "Projects {3,4,5} give NPV 121+83+265 = 469 and fit every year's budget. Without the logic rule the best set is {1,4,5} = 489, but P1 requires P6, and adding P6 blows Year 1's budget — so the rule costs you 20 of NPV.",
+          solution: ["Best ignoring logic: {1,4,5} = 141+83+265 = 489.", "But x1 ≤ x6 forces P6 if P1 is in — and {1,4,5,6} needs 255 in Year 1 > 250.", "So drop P1; next best feasible set is {3,4,5}.", "NPV = 121 + 83 + 265 = 469."],
+          worksheet: {
+            title: "Toggle projects — watch each year's budget and total NPV",
+            inputs: [
+              { key: "p1", label: "P1 (NPV 141)", def: 0, min: 0, max: 1, step: 1 },
+              { key: "p2", label: "P2 (NPV 187)", def: 0, min: 0, max: 1, step: 1 },
+              { key: "p3", label: "P3 (NPV 121)", def: 1, min: 0, max: 1, step: 1 },
+              { key: "p4", label: "P4 (NPV 83)", def: 1, min: 0, max: 1, step: 1 },
+              { key: "p5", label: "P5 (NPV 265)", def: 1, min: 0, max: 1, step: 1 },
+              { key: "p6", label: "P6 (NPV 127)", def: 0, min: 0, max: 1, step: 1 },
+            ],
+            rows: (v) => [
+              { label: "Year 1 used", value: 75 * v.p1 + 90 * v.p2 + 60 * v.p3 + 30 * v.p4 + 100 * v.p5 + 50 * v.p6, limit: 250 },
+              { label: "Year 2 used", value: 25 * v.p1 + 35 * v.p2 + 15 * v.p3 + 20 * v.p4 + 25 * v.p5 + 20 * v.p6, limit: 75 },
+              { label: "Year 3 used", value: 20 * v.p1 + 15 * v.p3 + 10 * v.p4 + 20 * v.p5 + 10 * v.p6, limit: 50 },
+              { label: "Year 4 used", value: 15 * v.p1 + 15 * v.p3 + 5 * v.p4 + 20 * v.p5 + 30 * v.p6, limit: 50 },
+              { label: "Year 5 used", value: 10 * v.p1 + 30 * v.p2 + 15 * v.p3 + 5 * v.p4 + 20 * v.p5 + 40 * v.p6, limit: 50 },
+              { label: "Logic: P1 − P6 (must be ≤ 0)", value: v.p1 - v.p6, limit: 0 },
+            ],
+            result: (v) => ({ label: "Total NPV of selected projects", value: 141 * v.p1 + 187 * v.p2 + 121 * v.p3 + 83 * v.p4 + 265 * v.p5 + 127 * v.p6 }),
+          } } },
+      { title: "Read the lesson", role: "output",
+        instr: ["The binary 'bin' constraint is what makes this an integer program — projects can't be fractionally funded.", "The logic rule x1 ≤ x6 is a linking constraint: 'if this, then that'. It costs 20 of NPV here (489 → 469) by forcing an unaffordable partner.", "Years 3–5 (only 50 each) are the binding budgets; Years 1–2 have slack. Relaxing a binding year's budget is where extra capital would buy you more NPV."], formulas: [] },
     ],
   },
 ];
@@ -1647,7 +1980,7 @@ const EXAMPLES = [
 /* ============================================================================
    TAB — EXAMPLES  (gallery: every assignment, solved by the in-app solver)
    ============================================================================ */
-function ExampleCard({ ex }) {
+function ExampleCard({ ex, onOpen }) {
   const preset = PRESETS[ex.key];
   const res = useMemo(
     () => solveMIP(preset.objType, preset.c, preset.constraints, preset.intVars || []),
@@ -1664,7 +1997,8 @@ function ExampleCard({ ex }) {
   const objValue = optimal ? `${ex.unit}${fmtNum(res.objective)}` : "—";
 
   return (
-    <div className="rounded-xl border border-slate-200 bg-white p-5 flex flex-col">
+    <button onClick={onOpen}
+      className="text-left rounded-xl border border-slate-200 bg-white p-5 flex flex-col hover:border-indigo-300 hover:shadow-sm transition">
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <span className={`text-[10px] ds-mono px-2 py-0.5 rounded-full border ${preset.objType === "max" ? "bg-amber-50 text-amber-700 border-amber-300" : "bg-blue-50 text-blue-700 border-blue-200"}`}>
           {preset.objType === "max" ? "maximize" : "minimize"}
@@ -1697,19 +2031,153 @@ function ExampleCard({ ex }) {
       ) : (
         <p className="text-[12px] ds-mono text-red-600">Model status: {res.status}</p>
       )}
+
+      <div className="mt-4 pt-3 border-t border-slate-100 flex items-center gap-1 text-indigo-600 text-sm ds-mono font-semibold">
+        <Play className="w-3.5 h-3.5" />Practice this live <ChevronRight className="w-4 h-4" />
+      </div>
+    </button>
+  );
+}
+
+// Live, interactive practice for any preset — the generic version of Randy's
+// tab. Enter each decision, watch every constraint check for feasibility and
+// the objective update live, then reveal (or auto-fill) the solver's optimum.
+function ExamplePractice({ ex }) {
+  const preset = PRESETS[ex.key];
+  const opt = useMemo(
+    () => solveMIP(preset.objType, preset.c, preset.constraints, preset.intVars || []),
+    [ex.key],
+  );
+  const [vals, setVals] = useState(() => preset.varNames.map(() => 0));
+  const [showOpt, setShowOpt] = useState(false);
+  const dot = (a, b) => a.reduce((s, ai, i) => s + ai * b[i], 0);
+  const fmt = (n) => Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const set = (i, raw) => setVals((v) => v.map((x, j) => (j === i ? (raw === "" ? 0 : Number(raw)) : x)));
+
+  const obj = dot(preset.c, vals);
+  const rows = preset.constraints.map((con) => {
+    const used = dot(con.coeffs, vals);
+    const ok = con.op === "<=" ? used <= con.rhs + 1e-6 : con.op === ">=" ? used >= con.rhs - 1e-6 : Math.abs(used - con.rhs) < 1e-6;
+    return { label: con.label, used, op: con.op, rhs: con.rhs, ok };
+  });
+  const feasible = rows.every((r) => r.ok);
+  const solved = opt.status === "optimal";
+  const isOpt = feasible && solved && Math.abs(obj - opt.objective) < 0.5;
+  const opWord = (o) => (o === "<=" ? "≤" : o === ">=" ? "≥" : "=");
+
+  return (
+    <div className="grid lg:grid-cols-5 gap-4">
+      {/* decisions */}
+      <div className="lg:col-span-2 space-y-3">
+        <div className="rounded-xl border border-amber-200 bg-amber-50/40 p-4">
+          <div className="ds-mono text-[11px] uppercase tracking-widest text-amber-600 mb-2">
+            Your decisions — {preset.objType === "max" ? "how many of each" : "how much on each route"}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {preset.varNames.map((name, i) => (
+              <label key={i} className="text-[11px] ds-mono text-slate-600 flex flex-col gap-1">
+                <span className="truncate">{name}</span>
+                <input type="number" value={vals[i]} onChange={(e) => set(i, e.target.value)}
+                  className="w-full px-2 py-1 rounded border border-slate-300 text-sm ds-mono text-center focus:outline-none focus:ring-2 focus:ring-amber-300" />
+              </label>
+            ))}
+          </div>
+          <div className="flex gap-2 mt-3">
+            <button onClick={() => setVals(preset.varNames.map(() => 0))}
+              className="px-2.5 py-1 rounded text-[11px] ds-mono border border-slate-300 text-slate-500 hover:text-slate-800">Reset</button>
+            {solved && (
+              <button onClick={() => setVals(opt.x.map((v) => Math.round(v * 100) / 100))}
+                className="px-2.5 py-1 rounded text-[11px] ds-mono border border-indigo-300 bg-indigo-50 text-indigo-700">Fill optimum</button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* feasibility + objective */}
+      <div className="lg:col-span-3 space-y-3">
+        <div className="rounded-xl border border-slate-200 bg-white p-4">
+          <div className="ds-mono text-[11px] uppercase tracking-widest text-slate-400 mb-2">Constraints — every line must check</div>
+          <div className="space-y-1">
+            {rows.map((r, i) => (
+              <div key={i} className="flex items-center justify-between gap-3 text-[12.5px] ds-mono px-2 py-1 rounded bg-slate-50">
+                <span className="text-slate-500 truncate">{r.label}</span>
+                <span className={`shrink-0 ${r.ok ? "text-slate-800" : "text-red-600 font-semibold"}`}>
+                  {fmt(r.used)} {opWord(r.op)} {fmt(r.rhs)} {r.ok ? "✓" : "✗"}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className={`rounded-xl border p-4 ${isOpt ? "border-green-300 bg-green-50" : feasible ? "border-indigo-200 bg-indigo-50/60" : "border-amber-200 bg-amber-50/60"}`}>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-[12px] ds-mono text-slate-600">Your {ex.objName} {feasible ? "(feasible)" : "(not feasible yet)"}</span>
+            <span className="ds-mono text-xl font-semibold text-slate-900 shrink-0">{ex.unit}{fmt(obj)}</span>
+          </div>
+          <p className="text-[13px] mt-1.5 flex items-start gap-1.5">
+            {isOpt ? (
+              <><CircleCheck className="w-4 h-4 text-green-600 shrink-0 mt-0.5" /><span className="text-green-700 font-medium">Optimal! You matched the solver's best possible {ex.objName}.</span></>
+            ) : !feasible ? (
+              <><CircleAlert className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" /><span className="text-amber-800">Fix the ✗ constraints — a plan only counts once every line checks.</span></>
+            ) : (
+              <><Lightbulb className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" /><span className="text-slate-600">Feasible — now push it {preset.objType === "max" ? "higher" : "lower"}. Can you reach the optimum?</span></>
+            )}
+          </p>
+        </div>
+
+        <button onClick={() => setShowOpt((v) => !v)} className="text-sm ds-mono text-indigo-600 font-semibold flex items-center gap-1">
+          {showOpt ? "Hide" : "Reveal"} the optimum <ChevronRight className={`w-4 h-4 transition ${showOpt ? "rotate-90" : ""}`} />
+        </button>
+        {showOpt && solved && (
+          <div className="rounded-lg bg-white border border-slate-200 p-3">
+            <div className="flex items-center justify-between gap-3 mb-2">
+              <span className="text-[12px] ds-mono text-indigo-700">Solver's optimal {ex.objName}</span>
+              <span className="ds-mono text-lg font-semibold text-indigo-800">{ex.unit}{fmt(opt.objective)}</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {preset.varNames.map((name, i) => opt.x[i] > 1e-6 && (
+                <span key={i} className="text-[12px] ds-mono px-2 py-1 rounded bg-slate-50 border border-slate-200 text-slate-700">
+                  {name} <span className="text-slate-900 font-semibold">{fmt(opt.x[i])}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExampleDetail({ ex, onBack }) {
+  const preset = PRESETS[ex.key];
+  return (
+    <div>
+      <button onClick={onBack} className="text-sm ds-mono text-slate-500 hover:text-slate-800 flex items-center gap-1 mb-2">
+        <ChevronLeft className="w-4 h-4" />All examples
+      </button>
+      <SectionTitle eyebrow={`Live practice · ${preset.objType === "max" ? "maximize" : "minimize"} ${ex.objName}`}
+        title={preset.label} sub={ex.note} />
+      <div className="rounded-lg bg-slate-900 text-slate-100 p-4 mb-5 max-w-3xl">
+        <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-1">The setup</div>
+        <p className="text-sm leading-relaxed">{preset.story}</p>
+      </div>
+      <ExamplePractice ex={ex} />
     </div>
   );
 }
 
 function Examples() {
+  const [openKey, setOpenKey] = useState(null);
+  const open = EXAMPLES.find((e) => e.key === openKey);
+  if (open) return <ExampleDetail ex={open} onBack={() => setOpenKey(null)} />;
   return (
     <div>
       <SectionTitle eyebrow="Worked examples" title="Every assignment, solved"
-        sub="One card per model we've built across the labs — product mix, the bake sale, the shipping networks, assignment, and staffing. Each optimum is computed live by the same tested solver the Builder uses, so what you see is exactly what Excel's Solver returns. Open Build & Solve to load any of these and change the numbers yourself." />
+        sub="One card per model we've built across the labs — product mix, the bake sale, the shipping networks, assignment, and staffing. Each optimum is computed live by the same tested solver the Builder uses. Click any card to practice it live: enter your own decisions and watch the constraints and objective react, just like Randy's example below." />
 
       <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
         {EXAMPLES.map((ex) => (
-          <ExampleCard key={ex.key} ex={ex} />
+          <ExampleCard key={ex.key} ex={ex} onOpen={() => setOpenKey(ex.key)} />
         ))}
       </div>
 
@@ -1765,6 +2233,101 @@ function HowTo() {
           ))}
         </ol>
       </div>
+    </div>
+  );
+}
+
+// Upload-and-diagnose panel: the student uploads the .xlsx they built, and the
+// app runs the heuristic auditor (readXlsx + auditTransport) entirely in the
+// browser — nothing leaves their machine — then shows how to solve it.
+function WorkbookAudit({ audit }) {
+  const [findings, setFindings] = useState(null);
+  const [fileName, setFileName] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [showSolve, setShowSolve] = useState(false);
+
+  const onFile = async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ""; // let the same file be re-picked after edits
+    if (!file) return;
+    setError(""); setFindings(null); setShowSolve(false); setFileName(file.name); setBusy(true);
+    try {
+      const buf = await file.arrayBuffer();
+      setFindings(auditTransport(readXlsx(buf), audit));
+    } catch (err) {
+      setError("Couldn't read that file — make sure it's a .xlsx (Excel Workbook), not .xls, .csv, or .numbers.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const sev = {
+    error: { wrap: "bg-red-50 border-red-200", chip: "text-red-600", Icon: CircleX },
+    warn: { wrap: "bg-amber-50 border-amber-200", chip: "text-amber-600", Icon: CircleAlert },
+    ok: { wrap: "bg-green-50 border-green-200", chip: "text-green-600", Icon: CircleCheck },
+  };
+  const nIssues = findings ? findings.filter((f) => f.sev !== "ok").length : 0;
+
+  return (
+    <div className="rounded-xl border border-indigo-200 bg-indigo-50/40 p-5 max-w-3xl mt-6">
+      <div className="flex items-center gap-2 mb-1">
+        <Sparkles className="w-4 h-4 text-indigo-500" />
+        <h3 className="ds-display font-semibold text-slate-900">Check my workbook</h3>
+      </div>
+      <p className="text-[13px] text-slate-600 mb-3">
+        Built this in Excel? Upload your <span className="ds-mono">.xlsx</span> and I'll break down what's wrong and show you how to solve it. Your file is read right here in the browser — it never leaves your computer.
+      </p>
+
+      <label className="inline-flex items-center gap-2 px-4 py-2 rounded-lg bg-slate-900 text-white text-sm ds-mono font-semibold cursor-pointer hover:bg-slate-700 transition">
+        <Upload className="w-4 h-4" />{busy ? "Reading…" : "Upload .xlsx"}
+        <input type="file" accept=".xlsx" onChange={onFile} className="hidden" />
+      </label>
+      {fileName && <span className="ml-3 text-[12px] ds-mono text-slate-500">{fileName}</span>}
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+      {findings && (
+        <div className="mt-4">
+          <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-2">
+            {nIssues === 0 ? "Diagnosis" : `${nIssues} issue${nIssues > 1 ? "s" : ""} found`}
+          </div>
+          <div className="space-y-2">
+            {findings.map((f, i) => {
+              const s = sev[f.sev] || sev.warn;
+              const Ic = s.Icon;
+              return (
+                <div key={i} className={`rounded-lg border p-3 ${s.wrap}`}>
+                  <div className="flex gap-2">
+                    <Ic className={`w-4 h-4 shrink-0 mt-0.5 ${s.chip}`} />
+                    <div>
+                      <div className="text-sm font-semibold text-slate-800">{f.title}</div>
+                      <div className="text-[13px] text-slate-600 mt-0.5">{f.detail}</div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <button onClick={() => setShowSolve((v) => !v)}
+            className="mt-4 flex items-center gap-1 text-sm ds-mono text-indigo-600 font-semibold">
+            {showSolve ? "Hide" : "Show me how to solve it"} <ChevronRight className={`w-4 h-4 transition ${showSolve ? "rotate-90" : ""}`} />
+          </button>
+          {showSolve && (
+            <div className="mt-2 rounded-lg bg-white border border-slate-200 p-4">
+              <div className="text-[11px] ds-mono uppercase tracking-widest text-slate-400 mb-2">The correct layout</div>
+              <ol className="list-decimal ml-4 space-y-1.5 text-[13px] text-slate-700">
+                {audit.layout.map((l, i) => <li key={i}>{l}</li>)}
+              </ol>
+              <div className="mt-3 rounded-lg bg-indigo-50 border border-indigo-200 p-3">
+                <div className="text-[12px] ds-mono text-indigo-700">Solver's optimum</div>
+                <div className="ds-mono text-lg font-semibold text-indigo-800">${audit.optimum.toLocaleString()}</div>
+                <div className="text-[12.5px] ds-mono text-slate-600 mt-1">{audit.plan}</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -1879,6 +2442,9 @@ function ProjectMode() {
           <div className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm ds-mono bg-green-50 text-green-700 border border-green-200 font-semibold"><CircleCheck className="w-4 h-4" />Model complete — go test it</div>
         )}
       </div>
+
+      {/* Final step: upload the workbook you built and get it diagnosed. */}
+      {proj.audit && stage === total - 1 && <WorkbookAudit audit={proj.audit} />}
     </div>
   );
 }
